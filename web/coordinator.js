@@ -23,6 +23,9 @@ let precursorGrid;   // Uint8Array — full padded precursor state
 let paddedTarget;    // Float32Array — full padded target in [0.25, 1.0]
 let outputImageData; // ImageData written to canvas
 let canvas, ctx, progressEl, downloadBtn, uploadArea;
+let plotCanvas, plotCtx;
+let fitnessHistory = [];   // avg fitness per outer iteration
+let tileFitnessSum, tileFitnessCount;
 
 // ------------------------------------------------------------
 // Entry point — called from index.html after DOM ready
@@ -31,6 +34,8 @@ let canvas, ctx, progressEl, downloadBtn, uploadArea;
 function init() {
     canvas      = document.getElementById('canvas');
     ctx         = canvas.getContext('2d');
+    plotCanvas  = document.getElementById('plot');
+    plotCtx     = plotCanvas.getContext('2d');
     progressEl  = document.getElementById('progress');
     downloadBtn = document.getElementById('downloadBtn');
     uploadArea  = document.getElementById('uploadArea');
@@ -94,10 +99,11 @@ function prepareAndRun(img) {
 
     srcW = offscreen.width;
     srcH = offscreen.height;
-    paddedW = srcW + 2 * PAD;
-    paddedH = srcH + 2 * PAD;
-    ySteps = Math.floor(srcH / STEP);
-    xSteps = Math.floor(srcW / STEP);
+    ySteps = Math.ceil(srcH / STEP);
+    xSteps = Math.ceil(srcW / STEP);
+    // Pad based on tile coverage, not raw src size, so edge tiles don't read past the buffer
+    paddedW = xSteps * STEP + 2 * PAD;
+    paddedH = ySteps * STEP + 2 * PAD;
 
     // Build padded float target [0.25, 1.0], 1.0 = dead = white border
     paddedTarget = new Float32Array(paddedH * paddedW).fill(1.0);
@@ -121,11 +127,14 @@ function prepareAndRun(img) {
     outputImageData = ctx.createImageData(srcW, srcH);
     outputImageData.data.fill(255);
     ctx.putImageData(outputImageData, 0, 0);
+    sizeCanvas();
 
     document.getElementById('fileInput').disabled = true;
     downloadBtn.disabled = true;
     uploadArea.style.display = 'none';
-    canvas.style.display = 'block';
+    document.getElementById('viewer').style.display = 'flex';
+    fitnessHistory = [];
+    drawPlot();
 
     runAllIterations();
 }
@@ -144,12 +153,14 @@ function pinBorder(grid, W, H, margin) {
 // ------------------------------------------------------------
 
 async function runAllIterations() {
-    let mutRate = 0.001;
+    const MUT_RATE_START = 0.001;
+    const MUT_RATE_DECAY = Math.pow(2, -10 / OUTER_ITS);  // same total decay as halving 10x
     for (let outerIt = 0; outerIt < OUTER_ITS; outerIt++) {
-        if (outerIt % 50 === 0) mutRate /= 2;
+        const mutRate = MUT_RATE_START * Math.pow(MUT_RATE_DECAY, outerIt);
         await runOneIteration(outerIt, mutRate);
         const pct = Math.round((outerIt + 1) / OUTER_ITS * 100);
-        progressEl.textContent = `Iteration ${outerIt + 1} / ${OUTER_ITS} — ${pct}%`;
+        const avgFitness = fitnessHistory[fitnessHistory.length - 1];
+        progressEl.textContent = `Iteration ${outerIt + 1} / ${OUTER_ITS} — ${pct}% — Log Fitness: ${Math.log10(Math.max(avgFitness, 1e-6)).toFixed(2)}`;
     }
     downloadBtn.disabled = false;
     progressEl.textContent = 'Done!';
@@ -165,6 +176,8 @@ function runOneIteration(outerIt, mutRate) {
         pendingTiles = ySteps * xSteps;
         pendingPrecursorWrites = [];
         jobQueue = [];
+        tileFitnessSum = 0;
+        tileFitnessCount = 0;
 
         for (let ty = 0; ty < ySteps; ty++) {
             for (let tx = 0; tx < xSteps; tx++) {
@@ -246,13 +259,17 @@ function handleWorkerMessage(workerIdx, msg) {
 
         writeTileToCanvas(msg.tileX, msg.tileY, msg.offset, msg.evolvedOut);
         pendingPrecursorWrites.push({ tileX: msg.tileX, tileY: msg.tileY, offset: msg.offset, precursorOut: msg.precursorOut });
+        tileFitnessSum += msg.fitness;
+        tileFitnessCount++;
 
         pendingTiles--;
         if (pendingTiles === 0) {
+            fitnessHistory.push(tileFitnessSum / tileFitnessCount);
             for (const w of pendingPrecursorWrites)
                 writeTileToPrecursorGrid(w.tileX, w.tileY, w.offset, w.precursorOut);
             pinBorder(precursorGrid, paddedW, paddedH, PAD);
             ctx.putImageData(outputImageData, 0, 0);
+            drawPlot();
             outerItResolver();
         } else {
             dispatchNext(workerIdx);
@@ -293,6 +310,89 @@ function writeTileToPrecursorGrid(tx, ty, offset, precursorOut) {
             (row + r) * paddedW + col
         );
     }
+}
+
+// ------------------------------------------------------------
+// Canvas display sizing
+// ------------------------------------------------------------
+
+function sizeCanvas() {
+    // Vertical budget: viewport minus header (~60px), controls (~60px), padding and gaps (~40px)
+    const maxH = Math.max(200, window.innerHeight - 160);
+    const maxW = window.innerWidth * 0.6;  // 3/5ths of screen width
+    const scale = Math.min(maxW / srcW, maxH / srcH);
+    canvas.style.width  = Math.round(srcW * scale) + 'px';
+    canvas.style.height = Math.round(srcH * scale) + 'px';
+}
+
+// ------------------------------------------------------------
+// Fitness plot
+// ------------------------------------------------------------
+
+function drawPlot() {
+    const W = plotCanvas.width;
+    const H = plotCanvas.height;
+    const PAD_L = 42, PAD_R = 10, PAD_T = 10, PAD_B = 30;
+    const pw = W - PAD_L - PAD_R;
+    const ph = H - PAD_T - PAD_B;
+
+    plotCtx.fillStyle = '#111';
+    plotCtx.fillRect(0, 0, W, H);
+
+    if (fitnessHistory.length === 0) return;
+
+    const window = 10;
+    const smoothed = fitnessHistory.map((_, i) => {
+        const slice = fitnessHistory.slice(Math.max(0, i - window + 1), i + 1);
+        return slice.reduce((a, b) => a + b, 0) / slice.length;
+    });
+    const logVals = smoothed.map(v => Math.log10(Math.max(v, 1e-6)));
+    const dataMin = Math.min(...logVals);
+    const dataMax = Math.max(...logVals);
+    const dataRange = Math.max(dataMax - dataMin, 0.1);
+    const margin = dataRange * 0.125;  // 4/5ths of axis used by data
+    const yMin = dataMin - margin;
+    const yMax = dataMax + margin;
+    const xMax = fitnessHistory.length / 0.9;
+
+    // Grid lines + Y axis labels
+    plotCtx.strokeStyle = '#333';
+    plotCtx.fillStyle = '#777';
+    plotCtx.font = '10px monospace';
+    plotCtx.textAlign = 'right';
+    const yTicks = 5;
+    for (let i = 0; i <= yTicks; i++) {
+        const v = yMin + (yMax - yMin) * i / yTicks;
+        const y = PAD_T + ph - (v - yMin) / (yMax - yMin) * ph;
+        plotCtx.beginPath();
+        plotCtx.moveTo(PAD_L, y);
+        plotCtx.lineTo(PAD_L + pw, y);
+        plotCtx.stroke();
+        plotCtx.fillText(v.toFixed(1), PAD_L - 4, y + 3);
+    }
+
+    // X axis label
+    plotCtx.fillStyle = '#555';
+    plotCtx.textAlign = 'center';
+    plotCtx.fillText('iteration', PAD_L + pw / 2, H - 4);
+
+    // Y axis label
+    plotCtx.save();
+    plotCtx.translate(10, PAD_T + ph / 2);
+    plotCtx.rotate(-Math.PI / 2);
+    plotCtx.fillText('log₁₀ fitness', 0, 0);
+    plotCtx.restore();
+
+    // Plot line
+    plotCtx.strokeStyle = '#7af';
+    plotCtx.lineWidth = 1.5;
+    plotCtx.beginPath();
+    for (let i = 0; i < logVals.length; i++) {
+        const x = PAD_L + (i / xMax) * pw;
+        const y = PAD_T + ph - (logVals[i] - yMin) / (yMax - yMin) * ph;
+        i === 0 ? plotCtx.moveTo(x, y) : plotCtx.lineTo(x, y);
+    }
+    plotCtx.stroke();
 }
 
 // ------------------------------------------------------------
