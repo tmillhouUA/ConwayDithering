@@ -42,22 +42,35 @@ static float rng_float(uint32_t& state) {
 static void gol_step(const uint8_t* __restrict__ in,
                            uint8_t* __restrict__ out,
                      int W, int H) {
+    // Interior: no bounds checks — lets compiler auto-vectorize with SIMD
+    for (int r = 1; r < H - 1; r++) {
+        const uint8_t* row0 = in + (r - 1) * W;
+        const uint8_t* row1 = in +  r      * W;
+        const uint8_t* row2 = in + (r + 1) * W;
+        for (int c = 1; c < W - 1; c++) {
+            int n = (1-row0[c-1]) + (1-row0[c]) + (1-row0[c+1])
+                  + (1-row1[c-1])               + (1-row1[c+1])
+                  + (1-row2[c-1]) + (1-row2[c]) + (1-row2[c+1]);
+            int alive = 1 - row1[c];
+            int new_alive = (alive & ((n == 2) | (n == 3))) | ((!alive) & (n == 3));
+            out[r * W + c] = static_cast<uint8_t>(1 - new_alive);
+        }
+    }
+    // Border: bounds-checked, ~6% of cells
     for (int r = 0; r < H; r++) {
         for (int c = 0; c < W; c++) {
-            int neighbors = 0;
+            if (r > 0 && r < H - 1 && c > 0 && c < W - 1) continue;
+            int n = 0;
             for (int dr = -1; dr <= 1; dr++) {
                 for (int dc = -1; dc <= 1; dc++) {
                     if (dr == 0 && dc == 0) continue;
                     int nr = r + dr, nc = c + dc;
-                    if (nr >= 0 && nr < H && nc >= 0 && nc < W) {
-                        // alive = (1 - in[]), so alive neighbor contributes 1
-                        neighbors += (1 - in[nr * W + nc]);
-                    }
+                    if (nr >= 0 && nr < H && nc >= 0 && nc < W)
+                        n += (1 - in[nr * W + nc]);
                 }
             }
             int alive = 1 - in[r * W + c];
-            int new_alive = (alive && (neighbors == 2 || neighbors == 3)) ||
-                            (!alive && neighbors == 3);
+            int new_alive = (alive && (n == 2 || n == 3)) || (!alive && n == 3);
             out[r * W + c] = static_cast<uint8_t>(1 - new_alive);
         }
     }
