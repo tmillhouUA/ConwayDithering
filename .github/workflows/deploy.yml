@@ -1,0 +1,41 @@
+name: Build and Deploy
+
+on:
+  push:
+    branches: [main]
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Emscripten
+        uses: mymindstorm/setup-emsdk@v14
+        with:
+          version: '3.1.51'
+
+      - name: Build WASM
+        run: |
+          mkdir -p dist
+          emcc src/cpp/dither.cpp \
+            -O3 \
+            -msimd128 \
+            --no-entry \
+            -s WASM=1 \
+            -s EXPORTED_FUNCTIONS='["_dither_alloc","_dither_free","_dither_process_tile"]' \
+            -s EXPORTED_RUNTIME_METHODS='["cwrap"]' \
+            -s ALLOW_MEMORY_GROWTH=1 \
+            -s INITIAL_MEMORY=33554432 \
+            -s ENVIRONMENT='web,worker' \
+            -s MODULARIZE=1 \
+            -s EXPORT_NAME='DitherModule' \
+            -o dist/dither.js
+          cp web/* dist/
+
+      - name: Deploy to GitHub Pages
+        uses: peaceiris/actions-gh-pages@v4
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: ./dist
