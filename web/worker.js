@@ -3,7 +3,7 @@
 
 importScripts('./dither.js');
 
-let _alloc, _free, _process;
+let _alloc, _free, _process, _allLosses;
 let Module = null;
 
 DitherModule().then(mod => {
@@ -22,7 +22,15 @@ DitherModule().then(mod => {
         'number',            // n_its
         'number',            // blur_amt
         'number',            // margin
-        'number'             // rng_seed (uint32)
+        'number',            // rng_seed (uint32)
+        'number',            // elitism (int)
+        'number'             // loss_func (int): 0=L2, 1=L1, 2=Huber
+    ]);
+    _allLosses = mod.cwrap('compute_tile_losses', null, [
+        'number',            // target_gray ptr (float32)
+        'number',            // evolved ptr (uint8)
+        'number', 'number',  // tileW, tileH
+        'number'             // losses_out ptr (float32[3])
     ]);
     self.postMessage({ type: 'ready' });
 });
@@ -45,13 +53,21 @@ self.onmessage = function(e) {
         targetPtr, job.tileW, job.tileH,
         precInPtr, precOutPtr, evoOutPtr,
         job.mutRate,
-        5,    // pop
-        100,  // gens
-        5,    // n_its
-        7,    // blur_amt
-        6,    // margin
-        job.seed
+        job.pop,
+        job.gens,
+        job.nIts,
+        7,           // blur_amt
+        10,          // margin
+        job.seed,
+        job.elitism,
+        job.lossFunc
     );
+
+    // Compute all three losses on the final evolved output (for plotting)
+    const lossesPtr = _alloc(3 * 4);  // float32[3]
+    _allLosses(targetPtr, evoOutPtr, job.tileW, job.tileH, lossesPtr);
+    const allLosses = Array.from(Module.HEAPF32.subarray(lossesPtr >> 2, (lossesPtr >> 2) + 3));
+    _free(lossesPtr);
 
     // Copy results out of WASM heap before freeing
     const precOut = Module.HEAPU8.slice(precOutPtr, precOutPtr + tileLen);
@@ -72,7 +88,8 @@ self.onmessage = function(e) {
             offset:      job.offset,
             evolvedOut:  evoOut,
             precursorOut: precOut,
-            fitness
+            fitness,
+            allLosses
         },
         [evoOut.buffer, precOut.buffer]
     );

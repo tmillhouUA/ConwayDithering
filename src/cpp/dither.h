@@ -27,7 +27,21 @@ float dither_process_tile(
     int            n_its,
     int            blur_amt,
     int            margin,
-    uint32_t       rng_seed
+    uint32_t       rng_seed,
+    int            elitism,
+    int            loss_func   // 0=L2, 1=L1, 2=Huber
+);
+
+// Computes all three losses on a pre-evolved tile (for plotting inactive functions).
+// target_gray : float32 [tileH*tileW], same format as dither_process_tile
+// evolved     : uint8  [tileH*tileW], the evolved output to evaluate
+// losses_out  : float32[3], filled with [L2, L1, Huber]
+void compute_tile_losses(
+    const float*   target_gray,
+    const uint8_t* evolved,
+    int            tileW,
+    int            tileH,
+    float*         losses_out
 );
 
 } // extern "C"

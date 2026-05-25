@@ -124,18 +124,63 @@ static void gaussian_blur(const float* __restrict__ in,
 }
 
 // ------------------------------------------------------------
-// L2 fitness: sum of squared differences
+// Loss functions: 0=L2 (Euclidean), 1=L1 (Manhattan), 2=Huber
 // ------------------------------------------------------------
 
-static float l2_fitness(const float* __restrict__ a,
-                        const float* __restrict__ b,
-                        int n) {
+static const float HUBER_DELTA = 0.15f;
+
+static float compute_loss(const float* __restrict__ a,
+                          const float* __restrict__ b,
+                          int n, int loss_func) {
     float sum = 0.0f;
-    for (int i = 0; i < n; i++) {
-        float d = a[i] - b[i];
-        sum += d * d;
+    if (loss_func == 1) {
+        for (int i = 0; i < n; i++)
+            sum += fabsf(a[i] - b[i]);
+    } else if (loss_func == 2) {
+        for (int i = 0; i < n; i++) {
+            float d = fabsf(a[i] - b[i]);
+            sum += (d <= HUBER_DELTA)
+                ? 0.5f * d * d
+                : HUBER_DELTA * (d - 0.5f * HUBER_DELTA);
+        }
+    } else {
+        for (int i = 0; i < n; i++) {
+            float d = a[i] - b[i];
+            sum += d * d;
+        }
     }
     return sum;
+}
+
+// ------------------------------------------------------------
+// All-losses evaluator (for plotting inactive loss functions)
+// ------------------------------------------------------------
+
+void compute_tile_losses(
+    const float*   target_gray,
+    const uint8_t* evolved,
+    int            tileW,
+    int            tileH,
+    float*         losses_out)
+{
+    const int N = tileW * tileH;
+    float* blur_in  = static_cast<float*>(malloc(N * sizeof(float)));
+    float* blur_tmp = static_cast<float*>(malloc(N * sizeof(float)));
+    float* blur_out = static_cast<float*>(malloc(N * sizeof(float)));
+    float* tgt_tmp  = static_cast<float*>(malloc(N * sizeof(float)));
+    float* tgt_blur = static_cast<float*>(malloc(N * sizeof(float)));
+
+    for (int i = 0; i < N; i++)
+        blur_in[i] = static_cast<float>(evolved[i]);
+    gaussian_blur(blur_in, blur_tmp, blur_out, tileW, tileH);
+    gaussian_blur(target_gray, tgt_tmp, tgt_blur, tileW, tileH);
+
+    losses_out[0] = compute_loss(tgt_blur, blur_out, N, 0);
+    losses_out[1] = compute_loss(tgt_blur, blur_out, N, 1);
+    losses_out[2] = compute_loss(tgt_blur, blur_out, N, 2);
+
+    free(blur_in); free(blur_tmp); free(blur_out);
+    free(tgt_tmp); free(tgt_blur);
 }
 
 // ------------------------------------------------------------
@@ -155,7 +200,9 @@ float dither_process_tile(
     int            n_its,
     int            blur_amt,
     int            margin,
-    uint32_t       rng_seed)
+    uint32_t       rng_seed,
+    int            elitism,
+    int            loss_func)
 {
     const int N = tileW * tileH;
 
@@ -187,11 +234,11 @@ float dither_process_tile(
 
     for (int gen = 0; gen < gens; gen++) {
 
-        // --- Mutate all individuals ---
-        for (int j = 0; j < pop; j++) {
+        // --- Mutate non-elite individuals ---
+        // Slots [0, elitism) are elite (unmutated); rest are mutated
+        for (int j = elitism; j < pop; j++) {
             uint8_t* indiv = population + j * N;
             for (int r = 0; r < tileH; r++) {
-                // Skip border cells (mutMask equivalent)
                 if (r < margin || r >= tileH - margin) continue;
                 for (int c = 0; c < tileW; c++) {
                     if (c < margin || c >= tileW - margin) continue;
@@ -222,8 +269,7 @@ float dither_process_tile(
             // Gaussian blur the evolved grid
             gaussian_blur(blur_in, blur_tmp, blur_out, tileW, tileH);
 
-            // L2 fitness vs blurred target
-            fitness[j] = l2_fitness(blurred_target, blur_out, N);
+            fitness[j] = compute_loss(blurred_target, blur_out, N, loss_func);
 
             if (fitness[j] < best_fitness) {
                 best_fitness = fitness[j];
@@ -231,12 +277,14 @@ float dither_process_tile(
             }
         }
 
-        // --- Clone best to all ---
+        // --- Clone best: fill elite slots first, then rest ---
         uint8_t* best_precursor = population + best_idx * N;
-        for (int j = 0; j < pop; j++) {
-            if (j != best_idx)
-                memcpy(population + j * N, best_precursor, N);
-        }
+        // Compact: move best to slot 0, fill remaining slots as copies
+        if (best_idx != 0)
+            memcpy(population, best_precursor, N);
+        for (int j = 1; j < pop; j++)
+            memcpy(population + j * N, population, N);
+        best_idx = 0;
 
         if (best_fitness < 1.0f) break;
     }

@@ -1,13 +1,13 @@
 // Main thread coordinator — manages the worker pool, outer GA loop,
 // canvas rendering, and progress reporting.
 
-const STEP      = 50;
-const HALF_STEP = 25;
-const MARGIN    = 6;
+const MARGIN    = 10;
 const OFFSETS   = [0, 25, 13, 38];    // 0, 1/2, 1/4, 3/4 of STEP (rounded)
-const PAD       = MARGIN + Math.max(...OFFSETS);  // 44 — enough for largest offset
-const TILE_SIZE = STEP + 2 * MARGIN;  // 62
-const OUTER_ITS = 500;
+// STEP, PAD, TILE_SIZE are runtime variables — set in prepareAndRun from slider
+let STEP      = 50;
+let PAD       = MARGIN + Math.max(...OFFSETS) + MARGIN;
+let TILE_SIZE = STEP + 2 * MARGIN;
+// OUTER_ITS is now read live from the control panel
 const MAX_WORKERS = Math.max(1, Math.floor((navigator.hardwareConcurrency || 4) * 0.75));
 
 let workers    = [];
@@ -19,26 +19,118 @@ let pendingPrecursorWrites = [];
 
 let srcW, srcH, paddedW, paddedH;
 let ySteps, xSteps;
-let precursorGrid;   // Uint8Array — full padded precursor state
+let precursorGrid;      // Uint8Array — full padded precursor state
+let bestPrecursorGrid;  // Uint8Array — precursor at best fitness so far
 let paddedTarget;    // Float32Array — full padded target in [0.25, 1.0]
 let outputImageData; // ImageData written to canvas
-let canvas, ctx, progressEl, downloadBtn, uploadArea;
+let bestImageData;   // ImageData of best frame so far
+let bestFitness = Infinity;
+let canvas, ctx, progressEl, uploadArea;
+let startPauseBtn, saveCurrentBtn, saveBestBtn;
 let plotCanvas, plotCtx;
-let fitnessHistory = [];   // avg fitness per outer iteration
+let fitnessHistory = [];        // avg loss per iteration for active function
+let allLossHistory = [[], [], []]; // avg loss per iteration for all three [L2, L1, Huber]
 let tileFitnessSum, tileFitnessCount;
+let tileAllLossSums, tileAllLossCount;
+let isPaused = true;
+let pauseResolver = null;
+let currentOuterIt = 0;
+
+// History snapshots: saved every 10 iterations
+// Each entry: { it: number, precursorGrid: Uint8Array, golSteps: number }
+let historySnapshots = [];
+let activeTab = 'output'; // 'output' | 'history'
+
+// ------------------------------------------------------------
+// Control panel helpers
+// ------------------------------------------------------------
+
+function getParams() {
+    return {
+        outerIts:    parseInt(document.getElementById('imgItsSlider').value),
+        pop:         parseInt(document.getElementById('popSlider').value),
+        tileIts:     parseInt(document.getElementById('tileItsSlider').value),
+        golSteps:    parseInt(document.getElementById('golStepsSlider').value),
+        mutRateStart: Math.pow(10, parseFloat(document.getElementById('mutRateSlider').value)),
+        elitism:     parseInt(document.getElementById('elitismSlider').value),
+        revertCycles:  parseInt(document.getElementById('revertSlider').value) / 4,
+        decayLambda:   parseInt(document.getElementById('decayLambdaSlider').value),
+        lossFunc:    parseInt(document.getElementById('lossFuncSelect').value),
+    };
+}
+
+function initControlPanel() {
+    const sliders = [
+        { slider: 'popSlider',      val: 'popVal',      fmt: v => v },
+        { slider: 'tileSizeSlider', val: 'tileSizeVal', fmt: v => v },
+        { slider: 'tileItsSlider',  val: 'tileItsVal',  fmt: v => v },
+        { slider: 'imgItsSlider',   val: 'imgItsVal',   fmt: v => v },
+        { slider: 'golStepsSlider', val: 'golStepsVal',  fmt: v => v },
+        { slider: 'mutRateSlider',   val: 'mutRateVal',   fmt: v => Math.pow(10, parseFloat(v)).toExponential(1) },
+        { slider: 'decayLambdaSlider', val: 'decayLambdaVal', fmt: v => v },
+        { slider: 'revertSlider',   val: 'revertVal',   fmt: v => v == 0 ? 'off' : `${v} its` },
+        { slider: 'elitismSlider',  val: 'elitismVal',  fmt: v => v == 0 ? 'off' : `${v}` },
+    ];
+    for (const { slider, val, fmt } of sliders) {
+        const el = document.getElementById(slider);
+        const display = document.getElementById(val);
+        el.addEventListener('input', () => { display.textContent = fmt(el.value); });
+    }
+    // Elitism max must stay below pop size
+    const popSlider      = document.getElementById('popSlider');
+    const elitismSlider  = document.getElementById('elitismSlider');
+    const elitismVal     = document.getElementById('elitismVal');
+    function updateElitismMax() {
+        const maxElitism = parseInt(popSlider.value) - 1;
+        elitismSlider.max = maxElitism;
+        if (parseInt(elitismSlider.value) > maxElitism) {
+            elitismSlider.value = maxElitism;
+            elitismVal.textContent = maxElitism || 'off';
+        }
+    }
+    popSlider.addEventListener('input', updateElitismMax);
+    updateElitismMax();
+
+    document.getElementById('lossFuncSelect').addEventListener('change', drawPlot);
+}
 
 // ------------------------------------------------------------
 // Entry point — called from index.html after DOM ready
 // ------------------------------------------------------------
 
 function init() {
-    canvas      = document.getElementById('canvas');
-    ctx         = canvas.getContext('2d');
-    plotCanvas  = document.getElementById('plot');
-    plotCtx     = plotCanvas.getContext('2d');
-    progressEl  = document.getElementById('progress');
-    downloadBtn = document.getElementById('downloadBtn');
-    uploadArea  = document.getElementById('uploadArea');
+    canvas        = document.getElementById('canvas');
+    ctx           = canvas.getContext('2d');
+    plotCanvas    = document.getElementById('plot');
+    plotCtx       = plotCanvas.getContext('2d');
+    new ResizeObserver(() => {
+        const h = plotCanvas.clientHeight;
+        if (h > 0 && plotCanvas.height !== h) {
+            plotCanvas.height = h;
+            drawPlot();
+        }
+    }).observe(plotCanvas);
+    progressEl    = document.getElementById('progress');
+    startPauseBtn = document.getElementById('startPauseBtn');
+    saveCurrentBtn = document.getElementById('saveCurrentBtn');
+    saveBestBtn   = document.getElementById('saveBestBtn');
+    uploadArea    = document.getElementById('uploadArea');
+
+    startPauseBtn.addEventListener('click', onStartPause);
+    saveCurrentBtn.addEventListener('click', onSaveCurrent);
+    saveBestBtn.addEventListener('click', onSaveBest);
+
+    document.getElementById('tabOutput').addEventListener('click', () => switchTab('output'));
+    document.getElementById('tabHistory').addEventListener('click', () => switchTab('history'));
+
+    document.getElementById('tabOverview').addEventListener('click', () => switchInfoTab('overview'));
+    document.getElementById('tabInstructions').addEventListener('click', () => switchInfoTab('instructions'));
+    document.getElementById('tabLogs').addEventListener('click', () => switchInfoTab('logs'));
+
+    document.getElementById('historyItSlider').addEventListener('input', onHistorySliderChange);
+    document.getElementById('historyGolSlider').addEventListener('input', onHistorySliderChange);
+    document.getElementById('historySaveCurrentBtn').addEventListener('click', onHistorySaveCurrent);
+    document.getElementById('historySaveSeriesBtn').addEventListener('click', onHistorySaveSeries);
 
     // Register service worker for COOP/COEP headers (enables SharedArrayBuffer)
     if ('serviceWorker' in navigator) {
@@ -51,8 +143,9 @@ function init() {
     }
 
     document.getElementById('fileInput').addEventListener('change', onFileSelected);
-    downloadBtn.addEventListener('click', onDownload);
+    document.getElementById('testImageBtn').addEventListener('click', onTestImage);
 
+    initControlPanel();
     spawnWorkers();
 }
 
@@ -73,7 +166,8 @@ function allWorkersReady() {
     window._workerReadyCount = (window._workerReadyCount || 0) + 1;
     if (window._workerReadyCount >= MAX_WORKERS) {
         document.getElementById('fileInput').disabled = false;
-        document.getElementById('statusText').textContent = 'Ready. Upload an image to begin.';
+        document.getElementById('testImageBtn').disabled = false;
+        document.getElementById('statusText').textContent = 'Ready.';
     }
 }
 
@@ -89,7 +183,18 @@ function onFileSelected(e) {
     img.src = URL.createObjectURL(file);
 }
 
+function onTestImage() {
+    const img = new Image();
+    img.onload = () => prepareAndRun(img);
+    img.src = './dennett.png';
+}
+
 function prepareAndRun(img) {
+    // Lock in tile geometry from slider (category 2 — only at start)
+    STEP      = parseInt(document.getElementById('tileSizeSlider').value);
+    PAD       = MARGIN + Math.max(...OFFSETS) + MARGIN;
+    TILE_SIZE = STEP + 2 * MARGIN;
+
     const offscreen = document.createElement('canvas');
     offscreen.width  = img.naturalWidth;
     offscreen.height = img.naturalHeight;
@@ -109,9 +214,9 @@ function prepareAndRun(img) {
     paddedTarget = new Float32Array(paddedH * paddedW).fill(1.0);
     for (let r = 0; r < srcH; r++) {
         for (let c = 0; c < srcW; c++) {
-            const px = imageData.data[(r * srcW + c) * 4];  // red channel (grayscale)
-            const v  = (px / 255.0) * 0.75 + 0.25;
-            paddedTarget[(r + PAD) * paddedW + (c + PAD)] = v;
+            const i = (r * srcW + c) * 4;
+            const lum = 0.2126 * imageData.data[i] + 0.7152 * imageData.data[i+1] + 0.0722 * imageData.data[i+2];
+            paddedTarget[(r + PAD) * paddedW + (c + PAD)] = (lum / 255.0) * 0.75 + 0.25;
         }
     }
 
@@ -130,13 +235,45 @@ function prepareAndRun(img) {
     sizeCanvas();
 
     document.getElementById('fileInput').disabled = true;
-    downloadBtn.disabled = true;
     uploadArea.style.display = 'none';
     document.getElementById('viewer').style.display = 'flex';
+    requestAnimationFrame(() => {
+        const outputH = document.getElementById('outputPanel').offsetHeight;
+        document.getElementById('infoPanel').style.height = outputH + 'px';
+        document.getElementById('leftCol').style.height   = outputH + 'px';
+    });
     fitnessHistory = [];
+    allLossHistory = [[], [], []];
+    bestFitness = Infinity;
+    bestPrecursorGrid = null;
+    bestImageData = null;
+    historySnapshots = [];
+    isPaused = true;
+    currentOuterIt = 0;
+    activeTab = 'output';
+    switchTab('output');
+    startPauseBtn.textContent = 'Start';
+    startPauseBtn.disabled = false;
+    saveCurrentBtn.disabled = false;
+    saveBestBtn.disabled = true;
+    setControlState('pre-start');
     drawPlot();
-
+    drawPrecursorToCanvas();
     runAllIterations();
+}
+
+function drawPrecursorToCanvas() {
+    for (let r = 0; r < srcH; r++) {
+        for (let c = 0; c < srcW; c++) {
+            const v = precursorGrid[(r + PAD) * paddedW + (c + PAD)] === 0 ? 0 : 255;
+            const idx = (r * srcW + c) * 4;
+            outputImageData.data[idx]     = v;
+            outputImageData.data[idx + 1] = v;
+            outputImageData.data[idx + 2] = v;
+            outputImageData.data[idx + 3] = 255;
+        }
+    }
+    ctx.putImageData(outputImageData, 0, 0);
 }
 
 function pinBorder(grid, W, H, margin) {
@@ -153,20 +290,113 @@ function pinBorder(grid, W, H, margin) {
 // ------------------------------------------------------------
 
 async function runAllIterations() {
-    const MUT_RATE_START = 0.001;
-    const MUT_RATE_DECAY = Math.pow(2, -10 / OUTER_ITS);  // same total decay as halving 10x
-    for (let outerIt = 0; outerIt < OUTER_ITS; outerIt++) {
-        const mutRate = MUT_RATE_START * Math.pow(MUT_RATE_DECAY, outerIt);
-        await runOneIteration(outerIt, mutRate);
-        const pct = Math.round((outerIt + 1) / OUTER_ITS * 100);
+    // Start paused — wait for user to press Start
+    await waitIfPaused();
+
+    const p = getParams();
+    const outerIts = p.outerIts;
+
+    let consecutiveBadCycles = 0;
+    let mutDecayIt = 0;  // only advances on accepted cycles
+
+    for (currentOuterIt = 0; currentOuterIt < outerIts; currentOuterIt++) {
+        // At the start of each cycle: revert if bad cycle count has reached the threshold
+        const revertCycles = getParams().revertCycles;
+        if ((currentOuterIt % 4) === 0 && revertCycles > 0
+                && consecutiveBadCycles >= revertCycles && bestPrecursorGrid !== null) {
+            precursorGrid.set(bestPrecursorGrid);
+            consecutiveBadCycles = 0;
+        }
+
+        const params = getParams();
+        const MUT_RATE_DECAY = Math.pow(2, -1 / params.decayLambda);
+        const mutRate = params.mutRateStart * Math.pow(MUT_RATE_DECAY, mutDecayIt);
+        await runOneIteration(currentOuterIt, mutRate, params);
+
+        // Always commit tile writes mid-cycle so next offset warm-starts from this result
+        for (const w of pendingPrecursorWrites)
+            writeTileToPrecursorGrid(w.tileX, w.tileY, w.offset, w.precursorOut);
+        pinBorder(precursorGrid, paddedW, paddedH, PAD);
+
         const avgFitness = fitnessHistory[fitnessHistory.length - 1];
-        progressEl.textContent = `Iteration ${outerIt + 1} / ${OUTER_ITS} — ${pct}% — Log Fitness: ${Math.log10(Math.max(avgFitness, 1e-6)).toFixed(2)}`;
+
+        // Check every full 4-iteration cycle (one pass through all offsets)
+        if ((currentOuterIt % 4) === 3) {
+            const cycleAvg = fitnessHistory.slice(-4).reduce((a, b) => a + b, 0) / 4;
+            if (cycleAvg < bestFitness) {
+                bestFitness = cycleAvg;
+                bestPrecursorGrid = precursorGrid.slice();
+                bestImageData = ctx.getImageData(0, 0, srcW, srcH);
+                saveBestBtn.disabled = false;
+                consecutiveBadCycles = 0;
+                mutDecayIt += 4;  // advance decay by one full cycle
+            } else {
+                consecutiveBadCycles++;
+            }
+        }
+
+        // Save snapshot when L2 loss drops >10% from last snapshot, or >25 its since last snapshot
+        const l2Loss = allLossHistory[0][allLossHistory[0].length - 1];
+        const lastSnap = historySnapshots[historySnapshots.length - 1];
+        const lastSnapLoss = lastSnap?._loss ?? Infinity;
+        const lastSnapIt   = lastSnap?.it ?? -Infinity;
+        const itsSinceLast = (currentOuterIt + 1) - lastSnapIt;
+        if (l2Loss < lastSnapLoss * 0.9 || itsSinceLast >= 32) {
+            const snap = {
+                it: currentOuterIt + 1,
+                precursorGrid: precursorGrid.slice(),
+                golSteps: getParams().golSteps,
+                _loss: l2Loss,
+            };
+            historySnapshots.push(snap);
+            updateHistorySliders();
+        }
+
+        const pct = Math.round((currentOuterIt + 1) / outerIts * 100);
+        progressEl.textContent = `It. ${currentOuterIt + 1} / ${outerIts} — ${pct}% — Log Loss: ${Math.log10(Math.max(avgFitness, 1e-6)).toFixed(2)}`;
+
+        await waitIfPaused();
     }
-    downloadBtn.disabled = false;
-    progressEl.textContent = 'Done!';
+
+    startPauseBtn.textContent = 'Done';
+    startPauseBtn.disabled = true;
+    setControlState('done');
+    progressEl.textContent = `Done — Log Loss: ${Math.log10(Math.max(bestFitness, 1e-6)).toFixed(2)}`;
 }
 
-function runOneIteration(outerIt, mutRate) {
+// Category definitions — IDs of controls in each group
+const CAT2_IDS = ['tileSizeSlider', 'imgItsSlider', 'golStepsSlider'];
+const CAT3_IDS = ['popSlider', 'tileItsSlider', 'mutRateSlider', 'decayLambdaSlider', 'revertSlider', 'elitismSlider'];
+
+function setControlState(state) {
+    // state: 'pre-start' | 'running' | 'paused' | 'done'
+    const cat2Disabled = state !== 'pre-start';
+    const cat3Disabled = state === 'running' || state === 'done';
+    for (const id of CAT2_IDS)
+        document.getElementById(id).disabled = cat2Disabled;
+    for (const id of CAT3_IDS)
+        document.getElementById(id).disabled = cat3Disabled;
+}
+
+function waitIfPaused() {
+    if (!isPaused) return Promise.resolve();
+    return new Promise(resolve => { pauseResolver = resolve; });
+}
+
+function onStartPause() {
+    if (isPaused) {
+        isPaused = false;
+        startPauseBtn.textContent = 'Pause';
+        setControlState('running');
+        if (pauseResolver) { pauseResolver(); pauseResolver = null; }
+    } else {
+        isPaused = true;
+        startPauseBtn.textContent = 'Resume';
+        setControlState('paused');
+    }
+}
+
+function runOneIteration(outerIt, mutRate, params) {
     return new Promise(resolve => {
         outerItResolver = resolve;
 
@@ -178,6 +408,8 @@ function runOneIteration(outerIt, mutRate) {
         jobQueue = [];
         tileFitnessSum = 0;
         tileFitnessCount = 0;
+        tileAllLossSums = [0, 0, 0];
+        tileAllLossCount = 0;
 
         for (let ty = 0; ty < ySteps; ty++) {
             for (let tx = 0; tx < xSteps; tx++) {
@@ -188,6 +420,11 @@ function runOneIteration(outerIt, mutRate) {
                     targetTile, precursorIn,
                     tileW: TILE_SIZE, tileH: TILE_SIZE,
                     mutRate,
+                    pop:      params.pop,
+                    gens:     params.tileIts,
+                    nIts:     params.golSteps,
+                    elitism:  params.elitism,
+                    lossFunc: params.lossFunc,
                     seed: ((outerIt * 10000 + ty * 1000 + tx) >>> 0) || 1
                 });
             }
@@ -261,13 +498,14 @@ function handleWorkerMessage(workerIdx, msg) {
         pendingPrecursorWrites.push({ tileX: msg.tileX, tileY: msg.tileY, offset: msg.offset, precursorOut: msg.precursorOut });
         tileFitnessSum += msg.fitness;
         tileFitnessCount++;
+        for (let k = 0; k < 3; k++) tileAllLossSums[k] += msg.allLosses[k];
+        tileAllLossCount++;
 
         pendingTiles--;
         if (pendingTiles === 0) {
             fitnessHistory.push(tileFitnessSum / tileFitnessCount);
-            for (const w of pendingPrecursorWrites)
-                writeTileToPrecursorGrid(w.tileX, w.tileY, w.offset, w.precursorOut);
-            pinBorder(precursorGrid, paddedW, paddedH, PAD);
+            for (let k = 0; k < 3; k++)
+                allLossHistory[k].push(tileAllLossSums[k] / tileAllLossCount);
             ctx.putImageData(outputImageData, 0, 0);
             drawPlot();
             outerItResolver();
@@ -317,93 +555,366 @@ function writeTileToPrecursorGrid(tx, ty, offset, precursorOut) {
 // ------------------------------------------------------------
 
 function sizeCanvas() {
-    // Vertical budget: viewport minus header (~60px), controls (~60px), padding and gaps (~40px)
-    const maxH = Math.max(200, window.innerHeight - 160);
-    const maxW = window.innerWidth * 0.6;  // 3/5ths of screen width
+    // Vertical budget: viewport minus header (~60px), controls (~80px), padding and gaps (~40px), then 10% shorter
+    const maxH = Math.max(200, (window.innerHeight - 180) * 0.9);
+    // Horizontal budget: viewport minus two 300px side columns, two 1rem gaps, and 2rem body padding
+    const maxW = Math.max(200, window.innerWidth - 600 - 4 * 16);
     const scale = Math.min(maxW / srcW, maxH / srcH);
     canvas.style.width  = Math.round(srcW * scale) + 'px';
     canvas.style.height = Math.round(srcH * scale) + 'px';
+
 }
 
 // ------------------------------------------------------------
 // Fitness plot
 // ------------------------------------------------------------
 
+const LOSS_COLORS = ['#7af', '#fa7', '#7f7'];  // L2=blue, L1=orange, Huber=green
+const LOSS_NAMES  = ['Euclidean', 'Manhattan', 'Huber'];
+
+function smoothEMA(history) {
+    const alpha = 0.14;
+    const out = [];
+    for (let i = 0; i < history.length; i++)
+        out.push(i === 0 ? history[0] : alpha * history[i] + (1 - alpha) * out[i - 1]);
+    return out;
+}
+
 function drawPlot() {
     const W = plotCanvas.width;
     const H = plotCanvas.height;
-    const PAD_L = 42, PAD_R = 10, PAD_T = 10, PAD_B = 30;
+    const PAD_L = 42, PAD_R = 10, PAD_T = 18, PAD_B = 52;
     const pw = W - PAD_L - PAD_R;
     const ph = H - PAD_T - PAD_B;
 
     plotCtx.fillStyle = '#111';
     plotCtx.fillRect(0, 0, W, H);
 
-    if (fitnessHistory.length === 0) return;
+    const activeLoss = parseInt(document.getElementById('lossFuncSelect').value);
 
-    const window = 10;
-    const smoothed = fitnessHistory.map((_, i) => {
-        const slice = fitnessHistory.slice(Math.max(0, i - window + 1), i + 1);
-        return slice.reduce((a, b) => a + b, 0) / slice.length;
-    });
-    const logVals = smoothed.map(v => Math.log10(Math.max(v, 1e-6)));
-    const dataMin = Math.min(...logVals);
-    const dataMax = Math.max(...logVals);
-    const dataRange = Math.max(dataMax - dataMin, 0.1);
-    const margin = dataRange * 0.125;  // 4/5ths of axis used by data
-    const yMin = dataMin - margin;
-    const yMax = dataMax + margin;
-    const xMax = fitnessHistory.length / 0.9;
+    // Y range — computed from data if available, otherwise dummy range for empty grid
+    let yMin = 0, yMax = 1, xMax = 1;
+    let shifted = [[], [], []];
+    let activeLog = [];
+    const hasData = fitnessHistory.length > 0;
 
-    // Grid lines + Y axis labels
+    if (hasData) {
+        const smoothed = allLossHistory.map(h => h.length ? smoothEMA(h) : []);
+        const logAll   = smoothed.map(s => s.map(v => Math.log10(Math.max(v, 1e-6))));
+        activeLog = logAll[activeLoss];
+        const offset0 = activeLog.length ? activeLog[0] : 0;
+        shifted = logAll.map((vals, k) => {
+            if (!vals.length) return [];
+            const delta = k === activeLoss ? 0 : offset0 - vals[0];
+            return vals.map(v => v + delta);
+        });
+        const allVals = shifted.flatMap(s => s);
+        const dataMin = Math.min(...allVals);
+        const dataMax = Math.max(...allVals);
+        const dataRange = Math.max(dataMax - dataMin, 0.1);
+        const yMargin = dataRange * 0.125;
+        yMin = dataMin - yMargin;
+        yMax = dataMax + yMargin;
+        xMax = fitnessHistory.length / 0.9;
+    }
+
+    // Grid lines + Y axis tick numbers (only when data exists)
     plotCtx.strokeStyle = '#333';
-    plotCtx.fillStyle = '#777';
+    plotCtx.lineWidth = 1;
     plotCtx.font = '10px monospace';
     plotCtx.textAlign = 'right';
     const yTicks = 5;
     for (let i = 0; i <= yTicks; i++) {
-        const v = yMin + (yMax - yMin) * i / yTicks;
-        const y = PAD_T + ph - (v - yMin) / (yMax - yMin) * ph;
+        const y = PAD_T + ph - (i / yTicks) * ph;
         plotCtx.beginPath();
         plotCtx.moveTo(PAD_L, y);
         plotCtx.lineTo(PAD_L + pw, y);
+        plotCtx.strokeStyle = '#333';
         plotCtx.stroke();
-        plotCtx.fillText(v.toFixed(1), PAD_L - 4, y + 3);
+        if (hasData) {
+            const v = yMin + (yMax - yMin) * (i / yTicks);
+            plotCtx.fillStyle = '#777';
+            plotCtx.fillText(v.toFixed(1), PAD_L - 4, y + 3);
+        }
     }
+
+    // Y axis label
+    plotCtx.fillStyle = '#555';
+    plotCtx.save();
+    plotCtx.translate(14, PAD_T + ph / 2);
+    plotCtx.rotate(-Math.PI / 2);
+    plotCtx.textAlign = 'center';
+    plotCtx.fillText('Log₁₀ Loss', 0, 0);
+    plotCtx.restore();
 
     // X axis label
     plotCtx.fillStyle = '#555';
     plotCtx.textAlign = 'center';
-    plotCtx.fillText('iteration', PAD_L + pw / 2, H - 4);
+    plotCtx.fillText('Iteration', PAD_L + pw / 2, H - PAD_B + 18);
 
-    // Y axis label
-    plotCtx.save();
-    plotCtx.translate(10, PAD_T + ph / 2);
-    plotCtx.rotate(-Math.PI / 2);
-    plotCtx.fillText('log₁₀ fitness', 0, 0);
-    plotCtx.restore();
+    // Legend: color swatches + names
+    const legendY = H - PAD_B + 38;
+    const totalW  = LOSS_NAMES.reduce((a, n) => a + n.length * 6 + 18, 0);
+    let lx = PAD_L + (pw - totalW) / 2;
+    for (let k = 0; k < 3; k++) {
+        plotCtx.globalAlpha = k === activeLoss ? 1.0 : 0.25;
+        plotCtx.fillStyle = LOSS_COLORS[k];
+        plotCtx.fillRect(lx, legendY - 7, 10, 2);
+        plotCtx.fillStyle = '#aaa';
+        plotCtx.textAlign = 'left';
+        plotCtx.fillText(LOSS_NAMES[k], lx + 14, legendY);
+        lx += LOSS_NAMES[k].length * 6 + 24;
+    }
+    plotCtx.globalAlpha = 1.0;
 
-    // Plot line
-    plotCtx.strokeStyle = '#7af';
+    if (!hasData) return;
+
+    // Draw inactive curves first (behind active)
+    for (let k = 0; k < 3; k++) {
+        if (k === activeLoss || !shifted[k].length) continue;
+        plotCtx.globalAlpha = 0.25;
+        plotCtx.strokeStyle = LOSS_COLORS[k];
+        plotCtx.lineWidth = 1.5;
+        plotCtx.beginPath();
+        for (let i = 0; i < shifted[k].length; i++) {
+            const x = PAD_L + (i / xMax) * pw;
+            const y = PAD_T + ph - (shifted[k][i] - yMin) / (yMax - yMin) * ph;
+            i === 0 ? plotCtx.moveTo(x, y) : plotCtx.lineTo(x, y);
+        }
+        plotCtx.stroke();
+    }
+
+    // Draw active curve on top
+    plotCtx.globalAlpha = 1.0;
+    plotCtx.strokeStyle = LOSS_COLORS[activeLoss];
     plotCtx.lineWidth = 1.5;
     plotCtx.beginPath();
-    for (let i = 0; i < logVals.length; i++) {
+    for (let i = 0; i < activeLog.length; i++) {
         const x = PAD_L + (i / xMax) * pw;
-        const y = PAD_T + ph - (logVals[i] - yMin) / (yMax - yMin) * ph;
+        const y = PAD_T + ph - (activeLog[i] - yMin) / (yMax - yMin) * ph;
         i === 0 ? plotCtx.moveTo(x, y) : plotCtx.lineTo(x, y);
     }
     plotCtx.stroke();
+    plotCtx.globalAlpha = 1.0;
 }
 
 // ------------------------------------------------------------
-// Download
+// Tab switching
 // ------------------------------------------------------------
 
-function onDownload() {
-    canvas.toBlob(blob => {
-        const a = document.createElement('a');
-        a.href = URL.createObjectURL(blob);
-        a.download = 'conway_dither.png';
-        a.click();
-    }, 'image/png');
+const INFO_TABS = ['overview', 'instructions', 'logs'];
+
+function switchInfoTab(tab) {
+    for (const t of INFO_TABS) {
+        document.getElementById(`${t}Inner`).style.display = t === tab ? '' : 'none';
+        document.getElementById(`tab${t.charAt(0).toUpperCase() + t.slice(1)}`).classList.toggle('active', t === tab);
+    }
+}
+
+function switchTab(tab) {
+    activeTab = tab;
+    const outputInner  = document.getElementById('outputInner');
+    const historyInner = document.getElementById('historyInner');
+    const tabOutput    = document.getElementById('tabOutput');
+    const tabHistory   = document.getElementById('tabHistory');
+
+    if (tab === 'output') {
+        outputInner.style.display  = '';
+        historyInner.style.display = 'none';
+        tabOutput.classList.add('active');
+        tabHistory.classList.remove('active');
+        // Restore current output image
+        if (outputImageData) ctx.putImageData(outputImageData, 0, 0);
+    } else {
+        // Pause if running
+        if (!isPaused && startPauseBtn.textContent === 'Pause') {
+            onStartPause();
+        }
+        outputInner.style.display  = 'none';
+        historyInner.style.display = '';
+        tabOutput.classList.remove('active');
+        tabHistory.classList.add('active');
+        updateHistorySliders();
+        renderHistoryFrame();
+    }
+}
+
+function updateHistorySliders() {
+    const itSlider  = document.getElementById('historyItSlider');
+    const golSlider = document.getElementById('historyGolSlider');
+    const itVal     = document.getElementById('historyItVal');
+    const golVal    = document.getElementById('historyGolVal');
+
+    if (historySnapshots.length === 0) {
+        itSlider.disabled  = true;
+        golSlider.disabled = true;
+        itVal.textContent  = '—';
+        golVal.textContent = '—';
+        document.getElementById('historySaveCurrentBtn').disabled = true;
+        document.getElementById('historySaveSeriesBtn').disabled  = true;
+        return;
+    }
+
+    itSlider.min   = 0;
+    itSlider.max   = historySnapshots.length - 1;
+    itSlider.value = historySnapshots.length - 1;
+    itSlider.disabled = false;
+
+    const snap = historySnapshots[parseInt(itSlider.value)];
+    itVal.textContent = snap.it;
+
+    golSlider.min   = 1;
+    golSlider.max   = snap.golSteps;
+    golSlider.value = snap.golSteps;
+    golSlider.disabled = false;
+    golVal.textContent = golSlider.value;
+
+    document.getElementById('historySaveCurrentBtn').disabled = false;
+    document.getElementById('historySaveSeriesBtn').disabled  = false;
+}
+
+function onHistorySliderChange() {
+    const itSlider  = document.getElementById('historyItSlider');
+    const golSlider = document.getElementById('historyGolSlider');
+    const itVal     = document.getElementById('historyItVal');
+    const golVal    = document.getElementById('historyGolVal');
+
+    const snap = historySnapshots[parseInt(itSlider.value)];
+    if (!snap) return;
+
+    itVal.textContent = snap.it;
+
+    // Adjust GoL slider range to match snapshot's golSteps
+    golSlider.max = snap.golSteps;
+    if (parseInt(golSlider.value) > snap.golSteps) golSlider.value = snap.golSteps;
+    golVal.textContent = golSlider.value;
+
+    renderHistoryFrameDebounced();
+}
+
+let _historyRenderTimer = null;
+function renderHistoryFrameDebounced() {
+    clearTimeout(_historyRenderTimer);
+    _historyRenderTimer = setTimeout(renderHistoryFrame, 30);
+}
+
+// Evolve a precursor grid for `steps` GoL steps and render to canvas.
+// Runs on main thread (no worker) since it's interactive and fast for one image.
+function renderHistoryFrame() {
+    if (historySnapshots.length === 0) return;
+    const itSlider  = document.getElementById('historyItSlider');
+    const golSlider = document.getElementById('historyGolSlider');
+    const snap = historySnapshots[parseInt(itSlider.value)];
+    if (!snap) return;
+    const steps = parseInt(golSlider.value);
+
+    const evolved = evolveGrid(snap.precursorGrid, paddedW, paddedH, steps);
+
+    // Write to outputImageData and canvas
+    const imgData = ctx.createImageData(srcW, srcH);
+    for (let r = 0; r < srcH; r++) {
+        for (let c = 0; c < srcW; c++) {
+            const v = evolved[(r + PAD) * paddedW + (c + PAD)] === 0 ? 0 : 255;
+            const idx = (r * srcW + c) * 4;
+            imgData.data[idx]     = v;
+            imgData.data[idx + 1] = v;
+            imgData.data[idx + 2] = v;
+            imgData.data[idx + 3] = 255;
+        }
+    }
+    ctx.putImageData(imgData, 0, 0);
+}
+
+// Pure-JS GoL step for a full padded grid (mirrors C++ logic)
+function golStepJS(src, dst, W, H) {
+    dst.set(src);
+    for (let r = 0; r < H; r++) {
+        for (let c = 0; c < W; c++) {
+            let n = 0;
+            for (let dr = -1; dr <= 1; dr++) {
+                for (let dc = -1; dc <= 1; dc++) {
+                    if (dr === 0 && dc === 0) continue;
+                    const nr = r + dr, nc = c + dc;
+                    if (nr >= 0 && nr < H && nc >= 0 && nc < W)
+                        n += (1 - src[nr * W + nc]);
+                }
+            }
+            const alive = 1 - src[r * W + c];
+            const newAlive = (alive && (n === 2 || n === 3)) || (!alive && n === 3) ? 1 : 0;
+            dst[r * W + c] = 1 - newAlive;
+        }
+    }
+}
+
+function evolveGrid(precursor, W, H, steps) {
+    let buf0 = precursor.slice();
+    let buf1 = new Uint8Array(W * H);
+    for (let s = 0; s < steps; s++) {
+        golStepJS(buf0, buf1, W, H);
+        [buf0, buf1] = [buf1, buf0];
+    }
+    return buf0;
+}
+
+function onHistorySaveCurrent() {
+    canvas.toBlob(blob => saveBlob(blob, 'conway_history_current.png'), 'image/png');
+}
+
+function onHistorySaveSeries() {
+    const itSlider  = document.getElementById('historyItSlider');
+    const snap = historySnapshots[parseInt(itSlider.value)];
+    if (!snap) return;
+
+    const N = snap.golSteps;
+    const offscreen = document.createElement('canvas');
+    offscreen.width  = srcW * N;
+    offscreen.height = srcH;
+    const offCtx = offscreen.getContext('2d');
+
+    for (let steps = 1; steps <= N; steps++) {
+        const evolved = evolveGrid(snap.precursorGrid, paddedW, paddedH, steps);
+        const imgData = offCtx.createImageData(srcW, srcH);
+        for (let r = 0; r < srcH; r++) {
+            for (let c = 0; c < srcW; c++) {
+                const v = evolved[(r + PAD) * paddedW + (c + PAD)] === 0 ? 0 : 255;
+                const idx = (r * srcW + c) * 4;
+                imgData.data[idx]     = v;
+                imgData.data[idx + 1] = v;
+                imgData.data[idx + 2] = v;
+                imgData.data[idx + 3] = 255;
+            }
+        }
+        // Draw each step side by side
+        const tmp = document.createElement('canvas');
+        tmp.width  = srcW;
+        tmp.height = srcH;
+        tmp.getContext('2d').putImageData(imgData, 0, 0);
+        offCtx.drawImage(tmp, (steps - 1) * srcW, 0);
+    }
+
+    offscreen.toBlob(blob => saveBlob(blob, `conway_series_it${snap.it}.png`), 'image/png');
+}
+
+// ------------------------------------------------------------
+// Save handlers
+// ------------------------------------------------------------
+
+function saveBlob(blob, filename) {
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = filename;
+    a.click();
+}
+
+function onSaveCurrent() {
+    canvas.toBlob(blob => saveBlob(blob, 'conway_dither_current.png'), 'image/png');
+}
+
+function onSaveBest() {
+    if (!bestImageData) return;
+    const offscreen = document.createElement('canvas');
+    offscreen.width  = srcW;
+    offscreen.height = srcH;
+    offscreen.getContext('2d').putImageData(bestImageData, 0, 0);
+    offscreen.toBlob(blob => saveBlob(blob, 'conway_dither_best.png'), 'image/png');
 }

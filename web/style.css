@@ -14,7 +14,7 @@ body {
 
 header {
   text-align: center;
-  margin-bottom: 0.75rem;
+  margin-bottom: 2rem;
 }
 
 h1 { font-size: 1.5rem; letter-spacing: 0.05em; }
@@ -47,16 +47,40 @@ main {
 #uploadArea:hover { border-color: #888; }
 
 #fileInput {
-  display: block;
-  margin: 1rem auto 0;
-  cursor: pointer;
-  color: #ccc;
+  display: none;
 }
 
-#fileInput:disabled { opacity: 0.4; cursor: default; }
+#uploadBtn {
+  display: inline-block;
+  margin-top: 1rem;
+  padding: 0.5rem 1.5rem;
+  background: #222;
+  color: #eee;
+  border: 1px solid #555;
+  border-radius: 4px;
+  font-family: monospace;
+  font-size: 0.95rem;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+#uploadBtn:hover { background: #333; }
+
+#fileInput:disabled + label,
+#uploadArea:has(#fileInput:disabled) #uploadBtn {
+  opacity: 0.4;
+  cursor: default;
+  pointer-events: none;
+}
+
+.orText {
+  color: #eee;
+  margin-top: 1rem;
+  margin-bottom: 1rem;
+}
 
 #statusText {
-  margin-top: 1rem;
+  margin-top: 0.75rem;
   color: #888;
   font-size: 0.85rem;
 }
@@ -66,25 +90,336 @@ main {
   flex-direction: row;
   align-items: flex-start;
   gap: 1rem;
-  width: 100%;
 }
 
-#plot {
-  border: 1px solid #333;
+#leftCol {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
   flex-shrink: 0;
 }
 
-#canvas {
+#plotPanel {
   border: 1px solid #333;
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+}
+
+#plot {
+  flex: 1;
+  min-height: 0;
+  width: 300px;
+}
+
+.panelTitle {
+  font-size: 0.75rem;
+  color: #666;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  padding: 0.35rem 0.75rem;
+  border-bottom: 1px solid #333;
+  text-align: center;
+}
+
+#controlPanel {
+  border: 1px solid #333;
+  width: 300px;
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  font-size: 0.8rem;
+}
+
+#rightCol {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  flex-shrink: 0;
+  align-self: flex-start;
+}
+
+#infoPanel {
+  border: 1px solid #333;
+  width: 300px;
+  min-height: 0;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  font-size: 0.8rem;
+}
+
+#infoTabs {
+  display: flex;
+  flex-direction: row;
+  border-bottom: 1px solid #333;
+  flex-shrink: 0;
+}
+
+.infoInner {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 0.6rem 0.75rem;
+  color: #aaa;
+  line-height: 1.5;
+  scrollbar-width: thin;
+  scrollbar-color: #444 #1a1a1a;
+}
+
+.infoInner::-webkit-scrollbar { width: 5px; }
+.infoInner::-webkit-scrollbar-track { background: #1a1a1a; }
+.infoInner::-webkit-scrollbar-thumb { background: #444; border-radius: 2px; }
+
+.infoInner h3 {
+  font-size: 0.78rem;
+  color: #ccc;
+  margin: 0.75rem 0 0.25rem;
+}
+
+.infoInner h3:first-child {
+  margin-top: 0;
+}
+
+.infoInner p {
+  font-size: 0.78rem;
+  margin-bottom: 0.5rem;
+}
+
+.infoInner dl {
+  margin: 0 0 0.25rem;
+}
+
+.infoInner dt {
+  font-size: 0.78rem;
+  font-variant: small-caps;
+  letter-spacing: 0.06em;
+  color: #7af;
+  margin-top: 0.5rem;
+}
+
+.infoInner dd {
+  font-size: 0.75rem;
+  color: #888;
+  margin: 0.1rem 0 0 0.75rem;
+}
+
+.infoInner dd em {
+  color: #666;
+  font-style: italic;
+}
+
+#controlPanel .panelTitle {
+  flex-shrink: 0;
+}
+
+#controlRows {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  padding: 0.6rem 0.75rem;
+  flex: 1;
+}
+
+.cpRow {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.cpRow label {
+  flex: 0 0 90px;
+  color: #aaa;
+}
+
+.cpRow input[type="range"] {
+  flex: 1;
+  min-width: 0;
+  accent-color: #7af;
+  margin-right: 0.75rem;
+}
+
+.cpRow input[type="number"] {
+  width: 36px;
+  background: #222;
+  border: 1px solid #555;
+  color: #eee;
+  border-radius: 3px;
+  text-align: center;
+  font-family: monospace;
+  font-size: 0.8rem;
+}
+
+.cpRow input[type="checkbox"] {
+  accent-color: #7af;
+  width: 14px;
+  height: 14px;
+}
+
+.cpRow select {
+  flex: 1;
+  background: #222;
+  border: 1px solid #555;
+  color: #eee;
+  border-radius: 3px;
+  font-family: monospace;
+  font-size: 0.8rem;
+  padding: 0.15rem 0.25rem;
+  cursor: pointer;
+}
+
+.cpRow span {
+  flex: 0 0 52px;
+  text-align: left;
+  color: #eee;
+}
+
+#canvasCol {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  flex: 1;
+}
+
+#outputPanel {
+  border: 1px solid #333;
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+}
+
+#outputTabs {
+  display: flex;
+  flex-direction: row;
+  border-bottom: 1px solid #333;
+}
+
+.tabBtn {
+  background: none !important;
+  border: none;
+  border-left: 1px solid #333;
+  border-bottom: 1px solid #333;
+  border-radius: 0;
+  color: #666;
+  font-size: 0.75rem;
+  font-family: monospace;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  padding: 0.35rem 0.75rem !important;
+  cursor: pointer;
+  transition: color 0.15s;
+  margin-bottom: -1px;
+}
+
+.tabBtn:last-child {
+  border-right: 1px solid #333;
+}
+
+.tabBtn:hover:not(:disabled) {
+  background: none !important;
+  color: #aaa;
+}
+
+.tabBtn.active {
+  color: #eee;
+  border-bottom: 1px solid #111; /* open bottom — connects to content */
+}
+
+#panelCanvas {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  padding: 0.6rem 0.75rem 0;
+  flex: 1;
+  min-height: 0;
+}
+
+#canvas {
   image-rendering: pixelated;
   /* sized dynamically by JS */
+}
+
+#outputInner {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.25rem 0.75rem 0.6rem;
+  height: 80px;
+  box-sizing: border-box;
+}
+
+#historyInner {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  justify-content: flex-end;
+  gap: 0.5rem;
+  padding: 0.25rem 0.75rem 0.6rem;
+  height: 80px;
+  box-sizing: border-box;
+}
+
+#historyControls {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+#historySliders {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  flex: 1;
+  min-width: 0;
+}
+
+.historyRow {
+  width: 100%;
+}
+
+.historyRow label {
+  flex: 0 0 80px;
+  color: #aaa;
+}
+
+.historyRow input[type="range"] {
+  flex: 1;
+  min-width: 0;
+  accent-color: #7af;
+  margin-right: 0.75rem;
+}
+
+.historyRow span {
+  flex: 0 0 40px;
+  text-align: left;
+  color: #eee;
+}
+
+#historyBtnRow {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  flex-shrink: 0;
+}
+
+#historyBtnRow button {
+  padding: 0.25rem 1rem;
 }
 
 #controls {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 0.75rem;
+  gap: 0.5rem;
+}
+
+#btnRow {
+  display: flex;
+  flex-direction: row;
+  gap: 0.5rem;
 }
 
 #progress {
