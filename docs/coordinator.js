@@ -163,7 +163,7 @@ function updateElitismMax() {
 
 function init() {
     canvas        = document.getElementById('canvas');
-    ctx           = canvas.getContext('2d');
+    ctx           = canvas.getContext('2d', { willReadFrequently: true });
     plotCanvas    = document.getElementById('plot');
     plotCtx       = plotCanvas.getContext('2d');
     new ResizeObserver(() => {
@@ -1223,6 +1223,7 @@ function renderLog(scrollToBottom = false) {
         deleteBtn.className = 'logDeleteBtn';
         deleteBtn.textContent = '×';
         deleteBtn.title = 'Delete entry';
+        deleteBtn.disabled = entry.id === currentRunId;
         deleteBtn.addEventListener('click', e => {
             e.stopPropagation();
             const entries = loadLog().filter(en => en.id !== entry.id);
