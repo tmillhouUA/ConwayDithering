@@ -15,12 +15,13 @@
 
   <main>
     <div id="uploadArea">
-      <p id="uploadLabel">Upload a grayscale image to begin</p>
+      <p id="uploadLabel">Upload a grayscale image to begin*</p>
       <label id="uploadBtn" for="fileInput">Choose File</label>
       <input type="file" id="fileInput" accept="image/*" disabled>
       <p class="orText">or use a test image</p>
       <button id="testImageBtn" disabled>Test Image</button>
       <p id="statusText">Loading WASM...</p>
+      <p id="imagetipText"><br><br>*An image with good contrast and a resolution of approximately 400x600 pixels is recommended.</p>
     </div>
 
     <div id="viewer" style="display:none;">
@@ -179,7 +180,7 @@
               <dt>Population</dt>
               <dd>Number of candidate precursors maintained per tile per iteration. <em>More candidates explore the search space more broadly but increase computation per iteration.</em></dd>
               <dt>Tile Size</dt>
-              <dd>Side length of the square region each tile covers in the output image. Fixed at run start. <em>Smaller tiles reduce search space per tile and and improve quality at the expense of speed.</em></dd>
+              <dd>Side length of the square region each tile covers in the output image. Fixed at run start. <em>Smaller tiles reduce search space per tile and improve quality at the expense of speed.</em></dd>
               <dt>Tile Gens</dt>
               <dd>Number of generations the genetic algorithm runs per tile per iteration. <em>More generations refine each tile further per pass but slow down iterations. Tiles are more refined each iteration, but share context information less often.</em></dd>
               <dt>Image Its</dt>
