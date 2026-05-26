@@ -566,21 +566,31 @@ function tileOrigin(tx, ty, offset) {
 }
 
 function extractTileF32(grid, tx, ty, offset) {
-    const tile = new Float32Array(TILE_SIZE * TILE_SIZE);
+    const tile = new Float32Array(TILE_SIZE * TILE_SIZE).fill(1.0);
     const { row, col } = tileOrigin(tx, ty, offset);
     for (let r = 0; r < TILE_SIZE; r++) {
-        const srcOff = (row + r) * paddedW + col;
-        tile.set(grid.subarray(srcOff, srcOff + TILE_SIZE), r * TILE_SIZE);
+        const gr = row + r;
+        if (gr < 0 || gr >= paddedH) continue;
+        for (let c = 0; c < TILE_SIZE; c++) {
+            const gc = col + c;
+            if (gc < 0 || gc >= paddedW) continue;
+            tile[r * TILE_SIZE + c] = grid[gr * paddedW + gc];
+        }
     }
     return tile;
 }
 
 function extractTileU8(grid, tx, ty, offset) {
-    const tile = new Uint8Array(TILE_SIZE * TILE_SIZE);
+    const tile = new Uint8Array(TILE_SIZE * TILE_SIZE).fill(1);
     const { row, col } = tileOrigin(tx, ty, offset);
     for (let r = 0; r < TILE_SIZE; r++) {
-        const srcOff = (row + r) * paddedW + col;
-        tile.set(grid.subarray(srcOff, srcOff + TILE_SIZE), r * TILE_SIZE);
+        const gr = row + r;
+        if (gr < 0 || gr >= paddedH) continue;
+        for (let c = 0; c < TILE_SIZE; c++) {
+            const gc = col + c;
+            if (gc < 0 || gc >= paddedW) continue;
+            tile[r * TILE_SIZE + c] = grid[gr * paddedW + gc];
+        }
     }
     return tile;
 }
