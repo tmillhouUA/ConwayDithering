@@ -53,6 +53,7 @@ function getParams() {
     return {
         outerIts:    parseInt(document.getElementById('imgItsSlider').value),
         pop:         parseInt(document.getElementById('popSlider').value),
+        tileSize:    parseInt(document.getElementById('tileSizeSlider').value),
         tileIts:     parseInt(document.getElementById('tileItsSlider').value),
         golSteps:    parseInt(document.getElementById('golStepsSlider').value),
         mutRateStart: Math.pow(10, parseFloat(document.getElementById('mutRateSlider').value)),
@@ -340,7 +341,7 @@ function prepareAndRun(img) {
         params: {
             outerIts:     initParams.outerIts,
             pop:          initParams.pop,
-            tileSize:     parseInt(document.getElementById('tileSizeSlider').value),
+            tileSize:     initParams.tileSize,
             tileIts:      initParams.tileIts,
             golSteps:     initParams.golSteps,
             mutRateStart: initParams.mutRateStart,
@@ -517,8 +518,8 @@ function runOneIteration(outerIt, mutRate, params) {
 
         for (let ty = tyStart; ty < tyEnd; ty++) {
             for (let tx = txStart; tx < txEnd; tx++) {
-                const targetTile  = extractTileF32(paddedTarget,  tx, ty, offset);
-                const precursorIn = extractTileU8 (precursorGrid, tx, ty, offset);
+                const targetTile  = extractTile(paddedTarget,  tx, ty, offset, Float32Array, 1.0);
+                const precursorIn = extractTile(precursorGrid, tx, ty, offset, Uint8Array,   1);
                 jobQueue.push({
                     outerIt, tileX: tx, tileY: ty, offset,
                     targetTile, precursorIn,
@@ -565,23 +566,8 @@ function tileOrigin(tx, ty, offset) {
     return { row, col };
 }
 
-function extractTileF32(grid, tx, ty, offset) {
-    const tile = new Float32Array(TILE_SIZE * TILE_SIZE).fill(1.0);
-    const { row, col } = tileOrigin(tx, ty, offset);
-    for (let r = 0; r < TILE_SIZE; r++) {
-        const gr = row + r;
-        if (gr < 0 || gr >= paddedH) continue;
-        for (let c = 0; c < TILE_SIZE; c++) {
-            const gc = col + c;
-            if (gc < 0 || gc >= paddedW) continue;
-            tile[r * TILE_SIZE + c] = grid[gr * paddedW + gc];
-        }
-    }
-    return tile;
-}
-
-function extractTileU8(grid, tx, ty, offset) {
-    const tile = new Uint8Array(TILE_SIZE * TILE_SIZE).fill(1);
+function extractTile(grid, tx, ty, offset, TypedArray, fillVal) {
+    const tile = new TypedArray(TILE_SIZE * TILE_SIZE).fill(fillVal);
     const { row, col } = tileOrigin(tx, ty, offset);
     for (let r = 0; r < TILE_SIZE; r++) {
         const gr = row + r;
@@ -917,6 +903,21 @@ function renderHistoryFrameDebounced() {
     _historyRenderTimer = setTimeout(renderHistoryFrame, 30);
 }
 
+function gridToImageData(ctx, evolved, srcW, srcH) {
+    const imgData = ctx.createImageData(srcW, srcH);
+    for (let r = 0; r < srcH; r++) {
+        for (let c = 0; c < srcW; c++) {
+            const v = evolved[(r + PAD) * paddedW + (c + PAD)] === 0 ? 0 : 255;
+            const idx = (r * srcW + c) * 4;
+            imgData.data[idx]     = v;
+            imgData.data[idx + 1] = v;
+            imgData.data[idx + 2] = v;
+            imgData.data[idx + 3] = 255;
+        }
+    }
+    return imgData;
+}
+
 // Evolve a precursor grid for `steps` GoL steps and render to canvas.
 // Runs on main thread (no worker) since it's interactive and fast for one image.
 function renderHistoryFrame() {
@@ -929,19 +930,7 @@ function renderHistoryFrame() {
 
     const evolved = evolveGrid(snap.precursorGrid, paddedW, paddedH, steps);
 
-    // Write to outputImageData and canvas
-    const imgData = ctx.createImageData(srcW, srcH);
-    for (let r = 0; r < srcH; r++) {
-        for (let c = 0; c < srcW; c++) {
-            const v = evolved[(r + PAD) * paddedW + (c + PAD)] === 0 ? 0 : 255;
-            const idx = (r * srcW + c) * 4;
-            imgData.data[idx]     = v;
-            imgData.data[idx + 1] = v;
-            imgData.data[idx + 2] = v;
-            imgData.data[idx + 3] = 255;
-        }
-    }
-    ctx.putImageData(imgData, 0, 0);
+    ctx.putImageData(gridToImageData(ctx, evolved, srcW, srcH), 0, 0);
 }
 
 // Pure-JS GoL step for a full padded grid (mirrors C++ logic)
@@ -992,17 +981,7 @@ function onHistorySaveSeries() {
 
     for (let steps = 1; steps <= N; steps++) {
         const evolved = evolveGrid(snap.precursorGrid, paddedW, paddedH, steps);
-        const imgData = offCtx.createImageData(srcW, srcH);
-        for (let r = 0; r < srcH; r++) {
-            for (let c = 0; c < srcW; c++) {
-                const v = evolved[(r + PAD) * paddedW + (c + PAD)] === 0 ? 0 : 255;
-                const idx = (r * srcW + c) * 4;
-                imgData.data[idx]     = v;
-                imgData.data[idx + 1] = v;
-                imgData.data[idx + 2] = v;
-                imgData.data[idx + 3] = 255;
-            }
-        }
+        const imgData = gridToImageData(offCtx, evolved, srcW, srcH);
         // Draw each step side by side
         const tmp = document.createElement('canvas');
         tmp.width  = srcW;
@@ -1147,7 +1126,7 @@ function updateRunLog(statusOverride) {
     entry.params = {
         outerIts:     p.outerIts,
         pop:          p.pop,
-        tileSize:     parseInt(document.getElementById('tileSizeSlider').value),
+        tileSize:     p.tileSize,
         tileIts:      p.tileIts,
         golSteps:     p.golSteps,
         mutRateStart: p.mutRateStart,
