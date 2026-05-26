@@ -199,7 +199,7 @@ function init() {
 
     // Register service worker for COOP/COEP headers (enables SharedArrayBuffer)
     if ('serviceWorker' in navigator) {
-        navigator.serviceWorker.register('./sw.js?v=1').then(reg => {
+        navigator.serviceWorker.register('./sw.js?v=2').then(reg => {
             if (!navigator.serviceWorker.controller) {
                 // First activation — reload once to get headers applied
                 window.location.reload();
