@@ -658,10 +658,13 @@ function writeTileToCanvas(tx, ty, offset, evolvedOut) {
 function writeTileToPrecursorGrid(tx, ty, offset, precursorOut) {
     const { row, col } = tileOrigin(tx, ty, offset);
     for (let r = 0; r < TILE_SIZE; r++) {
-        precursorGrid.set(
-            precursorOut.subarray(r * TILE_SIZE, (r + 1) * TILE_SIZE),
-            (row + r) * paddedW + col
-        );
+        const gr = row + r;
+        if (gr < 0 || gr >= paddedH) continue;
+        for (let c = 0; c < TILE_SIZE; c++) {
+            const gc = col + c;
+            if (gc < 0 || gc >= paddedW) continue;
+            precursorGrid[gr * paddedW + gc] = precursorOut[r * TILE_SIZE + c];
+        }
     }
 }
 
