@@ -1241,7 +1241,7 @@ function renderLog(scrollToBottom = false) {
             ['Image Its',  p.outerIts],
             ['GoL Steps',   p.golSteps],
             ['Mut. Rate',   fmtMutRate(p.mutRateStart)],
-            ['Decay λ',     p.decayLambda],
+            ['Decay L', p.decayLambda],
             ['Revert',      fmtRevert(p.revertCycles)],
             ['Elitism',     p.elitism === 0 ? 'off' : p.elitism],
             ['Loss Func.',  LOSS_FUNC_NAMES[p.lossFunc]],
