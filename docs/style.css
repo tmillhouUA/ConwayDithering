@@ -173,13 +173,21 @@ main {
 .infoInner::-webkit-scrollbar-thumb { background: #444; border-radius: 2px; }
 
 .infoInner h3 {
-  font-size: 0.78rem;
-  color: #ccc;
+  font-size: 0.75rem;
+  color: #7af;
   margin: 0.75rem 0 0.25rem;
 }
 
 .infoInner h3:first-child {
   margin-top: 0;
+}
+
+.infoInner h4 {
+  font-size: 0.78rem;
+  font-variant: small-caps;
+  letter-spacing: 0.06em;
+  color: #ccc;
+  margin: 0.6rem 0 0.2rem;
 }
 
 .infoInner p {
@@ -195,7 +203,7 @@ main {
   font-size: 0.78rem;
   font-variant: small-caps;
   letter-spacing: 0.06em;
-  color: #7af;
+  color: #ccc;
   margin-top: 0.5rem;
 }
 

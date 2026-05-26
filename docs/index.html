@@ -142,8 +142,11 @@
             <h3>How It Works</h3>
             <p>The image is divided into overlapping tiles. For each tile, an evolutionary algorithm searches for a starting state that, after a fixed number of Game of Life steps, produces a pattern that approximates the target image. Candidates are mutated and evaluated over many generations, with the mutation rate decaying as the image converges.</p>
             <h3>Why It Works</h3>
+            <h4>Precursor Optimization</h4>
             <p>The algorithm evolves the <em>precursor</em> rather than the output directly, so the result is always a valid Game of Life state — not an approximation of one. The visual style is, thus, a natural consequence of the algorithm's operation.</p>
+            <h4>Tile Decomposition</h4>
             <p>The use of overlapping tiles keeps each tile's search space small, while ensuring that adjacent regions remain visually coherent. Generations of the evolutionary algorithm are divided into sets called "iterations." After an iteration is complete (e.g., after 100 generations), the tiles are updated with information from the overlapping regions. Because each tile shares context with its neighbors, the final image is naturally seamless. Seaming is also mitigated by offsetting the tiles from iteration to iteration.</p>
+            <h4>Density-Based Objective</h4>
             <p>Finally, scoring is done on a blurred version of both the evolved output and the target image. This shifts the objective from pixel-level matching — which would produce a hard-threshold result, turning bright regions solid white and dark regions solid black — to density matching, where the optimizer must produce the right proportion of live cells in each local area. The blur radius determines the spatial scale of this density constraint. The target is also rescaled to avoid pure black, since fully black — i.e., fully alive — regions would demand densities inconsistent with the rules of Life, which prevent overcrowding.</p>
           </div>
           <div id="instructionsInner" class="infoInner" style="display:none;">
