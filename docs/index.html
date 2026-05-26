@@ -30,7 +30,7 @@
           <canvas id="plot" width="300" height="300"></canvas>
         </div>
         <div id="controlPanel">
-          <div class="panelTitle">Parameters</div>
+          <div class="panelTitle">Parameters<button id="resetParamsBtn" onclick="resetParams()">↺</button></div>
           <div id="controlRows">
           <div class="cpRow">
             <label>Population</label>
@@ -43,12 +43,12 @@
             <span id="tileSizeVal">50</span>
           </div>
           <div class="cpRow">
-            <label>Tile Its.</label>
+            <label>Tile Gens</label>
             <input type="range" id="tileItsSlider" min="10" max="500" value="100" step="10">
             <span id="tileItsVal">100</span>
           </div>
           <div class="cpRow">
-            <label>Image Its.</label>
+            <label>Image Its</label>
             <input type="range" id="imgItsSlider" min="50" max="2000" value="500" step="50">
             <span id="imgItsVal">500</span>
           </div>
@@ -138,7 +138,7 @@
           </div>
           <div id="overviewInner" class="infoInner">
             <h3>Overview</h3>
-            <p>Conway dithering converts an image into a one-bit Life pattern. The resulting image is not merely styled to look like Conway's Game of Life — the pattern is <em>actually</em> produced by running the Life rules forward from an evolutionarily-optimized starting state.</p>
+            <p>Conway dithering converts an image into a one-bit Life pattern. The resulting image is not merely styled to look like Conway's Game of Life — the pattern is actually produced by running the Life rules forward from an evolutionarily-optimized starting state.</p>
             <h3>How It Works</h3>
             <p>The image is divided into overlapping tiles. For each tile, an evolutionary algorithm searches for a starting state that, after a fixed number of Game of Life steps, produces a pattern that approximates the target image. Candidates are mutated and evaluated over many generations, with the mutation rate decaying as the image converges.</p>
             <h3>Why It Works</h3>
@@ -158,6 +158,8 @@
               <dd>Downloads the image currently displayed in the output panel.</dd>
               <dt>Save Best</dt>
               <dd>Downloads the image from the iteration with the lowest recorded loss. Enabled after the first cycle completes.</dd>
+              <dt>M + Mouseover</dt>
+              <dd>Hold M and move the mouse over the image to show a magnifying loupe.</dd>
             </dl>
             <h3>History Controls</h3>
             <dl>
@@ -169,29 +171,31 @@
               <dd>Downloads the currently displayed snapshot.</dd>
               <dt>Save Series</dt>
               <dd>Downloads a single image containing all GoL step counts (1 through N) for the selected iteration, laid out horizontally.</dd>
+              <dt>M + Mouseover</dt>
+              <dd>Hold M and move the mouse over the image to show a magnifying loupe.</dd>
             </dl>
             <h3>Parameters</h3>
             <dl>
               <dt>Population</dt>
               <dd>Number of candidate precursors maintained per tile per iteration. <em>More candidates explore the search space more broadly but increase computation per iteration.</em></dd>
               <dt>Tile Size</dt>
-              <dd>Side length of the square region each tile covers in the output image. Fixed at run start. <em>Smaller tiles reduce search space per tile but may produce visible structure at tile boundaries.</em></dd>
-              <dt>Tile Its.</dt>
-              <dd>Number of generations the genetic algorithm runs per tile per outer iteration. <em>More generations refine each tile further per pass but slow down outer iterations.</em></dd>
-              <dt>Image Its.</dt>
-              <dd>Total number of outer iterations to run. Fixed at run start. <em>More iterations allow the image to converge further, especially with a slow decay rate.</em></dd>
+              <dd>Side length of the square region each tile covers in the output image. Fixed at run start. <em>Smaller tiles reduce search space per tile and and improve quality at the expense of speed.</em></dd>
+              <dt>Tile Gens</dt>
+              <dd>Number of generations the genetic algorithm runs per tile per iteration. <em>More generations refine each tile further per pass but slow down iterations. Tiles are more refined each iteration, but share context information less often.</em></dd>
+              <dt>Image Its</dt>
+              <dd>Total number of iterations to run. Fixed at run start. <em>More iterations allow the image to converge further, especially with a slow decay rate.</em></dd>
               <dt>GoL Steps</dt>
-              <dd>Number of Game of Life steps applied to each precursor before scoring. Fixed at run start. <em>More steps produce denser, more evolved patterns; fewer steps stay closer to the precursor structure.</em></dd>
+              <dd>Number of Game of Life steps applied to each precursor before scoring. Fixed at run start. <em>More steps produce more Life-like patterns, while fewer steps makes it easier to approximate the target image.</em></dd>
               <dt>Mut. Rate</dt>
-              <dd>Initial probability of flipping any given cell in a candidate precursor during mutation. <em>Higher rates explore more aggressively early on; the rate decays over accepted iterations.</em></dd>
+              <dd>Initial probability of flipping any given cell in a candidate precursor during mutation. <em>Higher rates explore more aggressively early on; the rate decays over iterations.</em></dd>
               <dt>Decay λ</dt>
-              <dd>Controls how quickly the mutation rate decays. Specifically, the half-life of the mutation rate in accepted iterations. <em>Smaller values decay faster, locking in structure sooner; larger values keep mutation active longer.</em></dd>
+              <dd>Controls how quickly the mutation rate decays. Specifically, the half-life of the mutation rate in iterations. <em>Smaller values decay faster, locking in structure sooner; larger values keep mutation active longer.</em></dd>
               <dt>Revert Best</dt>
-              <dd>Number of consecutive bad cycles after which the precursor grid is reset to the best seen so far. Set to off to disable. <em>Helps escape local minima when the image stagnates.</em></dd>
+              <dd>Number of consecutive bad cycles after which the precursor grid is reset to the best seen so far. Set to off (0) to disable. <em>Prevents the algorithm from diverging too far from a known good solution; rapid resetting reduces exploration.</em></dd>
               <dt>Elitism</dt>
-              <dd>Number of top candidates carried over unmutated to the next generation. <em>Prevents the best solution from being lost to mutation; higher values reduce diversity.</em></dd>
+              <dd>Number of top candidates carried over unmutated to the next generation. <em>Prevents the best solution from being lost to mutation; higher values reduce exploration.</em></dd>
               <dt>Loss Func.</dt>
-              <dd>The function used to measure the difference between the blurred evolved output and the blurred target. Euclidean (L2) penalizes large errors heavily; Manhattan (L1) treats all errors more equally; Huber is a blend of the two. <em>The choice affects which tonal ranges the optimizer prioritizes.</em></dd>
+              <dd>The function used to measure the difference between the blurred evolved output and the blurred target. <em>Euclidean (L2) penalizes large errors heavily; Manhattan (L1) treats all errors equally; Huber is a blend of the two.</em></dd>
             </dl>
           </div>
           <div id="logsInner" class="infoInner" style="display:none;"></div>

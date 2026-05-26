@@ -4,8 +4,8 @@ body {
   font-family: monospace;
   background: #111;
   color: #eee;
-  height: 100vh;
-  overflow: hidden;
+  min-height: 100vh;
+  overflow: auto;
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -220,7 +220,24 @@ main {
 
 #controlPanel .panelTitle {
   flex-shrink: 0;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
 }
+
+#resetParamsBtn {
+  font-size: 0.7rem;
+  padding: 0.1rem 0.35rem;
+  background: none;
+  border: 1px solid #333;
+  color: #555;
+  border-radius: 3px;
+  cursor: pointer;
+  line-height: 1;
+  transition: color 0.15s, border-color 0.15s;
+}
+
+#resetParamsBtn:hover { color: #aaa; border-color: #555; background: none; }
 
 #controlRows {
   display: flex;
@@ -346,6 +363,14 @@ main {
 #canvas {
   image-rendering: pixelated;
   /* sized dynamically by JS */
+}
+
+#loupeCanvas {
+  position: fixed;
+  pointer-events: none;
+  image-rendering: pixelated;
+  box-shadow: 0 4px 18px rgba(0, 0, 0, 0.6);
+  z-index: 1000;
 }
 
 #outputInner {
@@ -490,12 +515,38 @@ button:disabled { opacity: 0.35; cursor: default; }
 
 .logEntry {
   border-bottom: 1px solid #1e1e1e;
-  padding: 0.35rem 0.5rem;
-  cursor: pointer;
+  display: flex;
+  flex-direction: row;
   font-size: 0.75rem;
 }
 
 .logEntry:hover { background: #161616; }
+
+.logDeleteBtn {
+  flex-shrink: 0;
+  width: 18px;
+  background: none;
+  border: none;
+  border-right: 1px solid #222;
+  color: #444;
+  font-size: 0.8rem;
+  padding: 0;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 0;
+  transition: color 0.15s, background 0.15s;
+}
+
+.logDeleteBtn:hover { color: #aaa; background: #1e1e1e; }
+
+.logEntryBody {
+  flex: 1;
+  min-width: 0;
+  padding: 0.35rem 0.5rem;
+  cursor: pointer;
+}
 
 .logSummary {
   display: flex;

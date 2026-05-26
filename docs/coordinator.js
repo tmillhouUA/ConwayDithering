@@ -63,39 +63,98 @@ function getParams() {
     };
 }
 
-function initControlPanel() {
-    const sliders = [
-        { slider: 'popSlider',      val: 'popVal',      fmt: v => v },
-        { slider: 'tileSizeSlider', val: 'tileSizeVal', fmt: v => v },
-        { slider: 'tileItsSlider',  val: 'tileItsVal',  fmt: v => v },
-        { slider: 'imgItsSlider',   val: 'imgItsVal',   fmt: v => v },
-        { slider: 'golStepsSlider', val: 'golStepsVal',  fmt: v => v },
-        { slider: 'mutRateSlider',   val: 'mutRateVal',   fmt: v => Math.pow(10, parseFloat(v)).toExponential(1) },
-        { slider: 'decayLambdaSlider', val: 'decayLambdaVal', fmt: v => v },
-        { slider: 'revertSlider',   val: 'revertVal',   fmt: v => v == 0 ? 'off' : `${v} its` },
-        { slider: 'elitismSlider',  val: 'elitismVal',  fmt: v => v == 0 ? 'off' : `${v}` },
-    ];
-    for (const { slider, val, fmt } of sliders) {
-        const el = document.getElementById(slider);
-        const display = document.getElementById(val);
-        el.addEventListener('input', () => { display.textContent = fmt(el.value); });
+const PARAM_KEY = 'conwayDitherParams';
+
+const PARAM_CONTROLS = [
+    { slider: 'popSlider',         val: 'popVal',         fmt: v => v },
+    { slider: 'tileSizeSlider',    val: 'tileSizeVal',    fmt: v => v },
+    { slider: 'tileItsSlider',     val: 'tileItsVal',     fmt: v => v },
+    { slider: 'imgItsSlider',      val: 'imgItsVal',      fmt: v => v },
+    { slider: 'golStepsSlider',    val: 'golStepsVal',    fmt: v => v },
+    { slider: 'mutRateSlider',     val: 'mutRateVal',     fmt: v => Math.pow(10, parseFloat(v)).toExponential(1) },
+    { slider: 'decayLambdaSlider', val: 'decayLambdaVal', fmt: v => v },
+    { slider: 'revertSlider',      val: 'revertVal',      fmt: v => v == 0 ? 'off' : `${v} its` },
+    { slider: 'elitismSlider',     val: 'elitismVal',     fmt: v => v == 0 ? 'off' : `${v}` },
+    { select: 'lossFuncSelect' },
+];
+
+function saveParams() {
+    const out = {};
+    for (const c of PARAM_CONTROLS) {
+        if (c.slider) out[c.slider] = document.getElementById(c.slider).value;
+        if (c.select) out[c.select] = document.getElementById(c.select).value;
     }
-    // Elitism max must stay below pop size
-    const popSlider      = document.getElementById('popSlider');
-    const elitismSlider  = document.getElementById('elitismSlider');
-    const elitismVal     = document.getElementById('elitismVal');
-    function updateElitismMax() {
-        const maxElitism = parseInt(popSlider.value) - 1;
-        elitismSlider.max = maxElitism;
-        if (parseInt(elitismSlider.value) > maxElitism) {
-            elitismSlider.value = maxElitism;
-            elitismVal.textContent = maxElitism || 'off';
+    try { localStorage.setItem(PARAM_KEY, JSON.stringify(out)); } catch {}
+}
+
+function loadParams() {
+    try { return JSON.parse(localStorage.getItem(PARAM_KEY)) || {}; } catch { return {}; }
+}
+
+function applyParams(saved) {
+    for (const c of PARAM_CONTROLS) {
+        if (c.slider) {
+            const el = document.getElementById(c.slider);
+            const display = document.getElementById(c.val);
+            if (saved[c.slider] !== undefined) {
+                el.value = saved[c.slider];
+                display.textContent = c.fmt(el.value);
+            }
+        }
+        if (c.select && saved[c.select] !== undefined) {
+            document.getElementById(c.select).value = saved[c.select];
         }
     }
-    popSlider.addEventListener('input', updateElitismMax);
+}
+
+function resetParams() {
+    if (!confirm('Reset all parameters to defaults?')) return;
+    localStorage.removeItem(PARAM_KEY);
+    for (const c of PARAM_CONTROLS) {
+        if (c.slider) {
+            const el = document.getElementById(c.slider);
+            el.value = el.defaultValue;
+            document.getElementById(c.val).textContent = c.fmt(el.value);
+        }
+        if (c.select) {
+            const el = document.getElementById(c.select);
+            el.value = el.options[0].value;
+        }
+    }
+    updateElitismMax();
+}
+
+function initControlPanel() {
+    for (const c of PARAM_CONTROLS) {
+        if (c.slider) {
+            const el = document.getElementById(c.slider);
+            const display = document.getElementById(c.val);
+            el.addEventListener('input', () => { display.textContent = c.fmt(el.value); saveParams(); });
+        }
+        if (c.select) {
+            document.getElementById(c.select).addEventListener('change', saveParams);
+        }
+    }
+    document.getElementById('popSlider').addEventListener('input', updateElitismMax);
     updateElitismMax();
 
     document.getElementById('lossFuncSelect').addEventListener('change', drawPlot);
+
+    applyParams(loadParams());
+    updateElitismMax();
+    saveParams();
+}
+
+function updateElitismMax() {
+    const popSlider     = document.getElementById('popSlider');
+    const elitismSlider = document.getElementById('elitismSlider');
+    const elitismVal    = document.getElementById('elitismVal');
+    const maxElitism = parseInt(popSlider.value) - 1;
+    elitismSlider.max = maxElitism;
+    if (parseInt(elitismSlider.value) > maxElitism) {
+        elitismSlider.value = maxElitism;
+        elitismVal.textContent = maxElitism || 'off';
+    }
 }
 
 // ------------------------------------------------------------
@@ -123,6 +182,8 @@ function init() {
     startPauseBtn.addEventListener('click', onStartPause);
     saveCurrentBtn.addEventListener('click', onSaveCurrent);
     saveBestBtn.addEventListener('click', onSaveBest);
+
+    initLoupe();
 
     document.getElementById('tabOutput').addEventListener('click', () => switchTab('output'));
     document.getElementById('tabHistory').addEventListener('click', () => switchTab('history'));
@@ -211,8 +272,9 @@ function prepareAndRun(img) {
 
     srcW = offscreen.width;
     srcH = offscreen.height;
-    ySteps = Math.ceil(srcH / STEP);
-    xSteps = Math.ceil(srcW / STEP);
+    const maxOffset = Math.max(...OFFSETS);
+    ySteps = Math.ceil((srcH + maxOffset) / STEP);
+    xSteps = Math.ceil((srcW + maxOffset) / STEP);
     // Pad based on tile coverage, not raw src size, so edge tiles don't read past the buffer
     paddedW = xSteps * STEP + 2 * PAD;
     paddedH = ySteps * STEP + 2 * PAD;
@@ -278,7 +340,7 @@ function prepareAndRun(img) {
         params: {
             outerIts:     initParams.outerIts,
             pop:          initParams.pop,
-            tileSize:     STEP,
+            tileSize:     parseInt(document.getElementById('tileSizeSlider').value),
             tileIts:      initParams.tileIts,
             golSteps:     initParams.golSteps,
             mutRateStart: initParams.mutRateStart,
@@ -412,6 +474,7 @@ function setControlState(state) {
         document.getElementById(id).disabled = cat2Disabled;
     for (const id of CAT3_IDS)
         document.getElementById(id).disabled = cat3Disabled;
+    document.getElementById('resetParamsBtn').disabled = state !== 'pre-start';
 }
 
 function waitIfPaused() {
@@ -441,7 +504,10 @@ function runOneIteration(outerIt, mutRate, params) {
         // Cycle through 4 tile grid offsets each iteration
         const offset = OFFSETS[outerIt % 4];
 
-        pendingTiles = ySteps * xSteps;
+        // Start at ty/tx = -1 so tiles at non-zero offsets still cover the top/left edge
+        const tyStart = -1, txStart = -1;
+        const tyEnd = ySteps, txEnd = xSteps;
+        pendingTiles = (tyEnd - tyStart) * (txEnd - txStart);
         pendingPrecursorWrites = [];
         jobQueue = [];
         tileFitnessSum = 0;
@@ -449,8 +515,8 @@ function runOneIteration(outerIt, mutRate, params) {
         tileAllLossSums = [0, 0, 0];
         tileAllLossCount = 0;
 
-        for (let ty = 0; ty < ySteps; ty++) {
-            for (let tx = 0; tx < xSteps; tx++) {
+        for (let ty = tyStart; ty < tyEnd; ty++) {
+            for (let tx = txStart; tx < txEnd; tx++) {
                 const targetTile  = extractTileF32(paddedTarget,  tx, ty, offset);
                 const precursorIn = extractTileU8 (precursorGrid, tx, ty, offset);
                 jobQueue.push({
@@ -936,6 +1002,66 @@ function onHistorySaveSeries() {
 }
 
 // ------------------------------------------------------------
+// Loupe
+// ------------------------------------------------------------
+
+const LOUPE_SIZE    = 160;  // display size in px
+const LOUPE_ZOOM    = 6;    // magnification factor
+const LOUPE_OFFSET  = 16;   // gap between cursor and loupe edge
+
+let loupeCanvas, loupeCtx;
+let _lastMouseEvent = null;
+let _mKeyHeld = false;
+
+function initLoupe() {
+    loupeCanvas = document.createElement('canvas');
+    loupeCanvas.width  = LOUPE_SIZE;
+    loupeCanvas.height = LOUPE_SIZE;
+    loupeCanvas.id = 'loupeCanvas';
+    loupeCanvas.style.display = 'none';
+    document.body.appendChild(loupeCanvas);
+    loupeCtx = loupeCanvas.getContext('2d');
+    loupeCtx.imageSmoothingEnabled = false;
+
+    canvas.addEventListener('mousemove', onLoupeMove);
+    canvas.addEventListener('mouseleave', () => { loupeCanvas.style.display = 'none'; });
+    document.addEventListener('keydown', e => { if ((e.key === 'm' || e.key === 'M') && !e.repeat) { _mKeyHeld = true; if (_lastMouseEvent) onLoupeMove(_lastMouseEvent); } });
+    document.addEventListener('keyup',   e => { if (e.key === 'm' || e.key === 'M') { _mKeyHeld = false; loupeCanvas.style.display = 'none'; } });
+}
+
+function onLoupeMove(e) {
+    _lastMouseEvent = e;
+    if (!srcW || !srcH || !_mKeyHeld) {
+        loupeCanvas.style.display = 'none';
+        return;
+    }
+
+    // Map mouse position from display space to canvas pixel space
+    const rect = canvas.getBoundingClientRect();
+    const scaleX = srcW / rect.width;
+    const scaleY = srcH / rect.height;
+    const px = (e.clientX - rect.left) * scaleX;
+    const py = (e.clientY - rect.top)  * scaleY;
+
+    // Source region to sample (in canvas pixels)
+    const srcRegion = LOUPE_SIZE / LOUPE_ZOOM;
+    const sx = Math.round(px - srcRegion / 2);
+    const sy = Math.round(py - srcRegion / 2);
+
+    loupeCtx.fillStyle = '#000';
+    loupeCtx.fillRect(0, 0, LOUPE_SIZE, LOUPE_SIZE);
+    loupeCtx.drawImage(canvas, sx, sy, srcRegion, srcRegion, 0, 0, LOUPE_SIZE, LOUPE_SIZE);
+
+    // Position loupe near cursor, flipping to stay on screen
+    const vw = window.innerWidth, vh = window.innerHeight;
+    const flipX = e.clientX + LOUPE_OFFSET + LOUPE_SIZE > vw;
+    const flipY = e.clientY + LOUPE_OFFSET + LOUPE_SIZE > vh;
+    loupeCanvas.style.left = (flipX ? e.clientX - LOUPE_OFFSET - LOUPE_SIZE : e.clientX + LOUPE_OFFSET) + 'px';
+    loupeCanvas.style.top  = (flipY ? e.clientY - LOUPE_OFFSET - LOUPE_SIZE : e.clientY + LOUPE_OFFSET) + 'px';
+    loupeCanvas.style.display = 'block';
+}
+
+// ------------------------------------------------------------
 // Save handlers
 // ------------------------------------------------------------
 
@@ -1004,6 +1130,19 @@ function updateRunLog(statusOverride) {
         };
         entry.iterations = n;
     }
+    const p = getParams();
+    entry.params = {
+        outerIts:     p.outerIts,
+        pop:          p.pop,
+        tileSize:     parseInt(document.getElementById('tileSizeSlider').value),
+        tileIts:      p.tileIts,
+        golSteps:     p.golSteps,
+        mutRateStart: p.mutRateStart,
+        elitism:      p.elitism,
+        revertCycles: p.revertCycles,
+        decayLambda:  p.decayLambda,
+        lossFunc:     p.lossFunc,
+    };
     if (statusOverride) entry.status = statusOverride;
     saveLog(entries);
     renderLog();
@@ -1067,6 +1206,18 @@ function renderLog(scrollToBottom = false) {
         const isExpanded = expandedLogIds.has(entry.id);
         div.className = isExpanded ? 'logEntry expanded' : 'logEntry';
 
+        const deleteBtn = document.createElement('button');
+        deleteBtn.className = 'logDeleteBtn';
+        deleteBtn.textContent = '×';
+        deleteBtn.title = 'Delete entry';
+        deleteBtn.addEventListener('click', e => {
+            e.stopPropagation();
+            const entries = loadLog().filter(en => en.id !== entry.id);
+            saveLog(entries);
+            expandedLogIds.delete(entry.id);
+            renderLog();
+        });
+
         const summary = document.createElement('div');
         summary.className = 'logSummary';
         summary.innerHTML =
@@ -1086,8 +1237,8 @@ function renderLog(scrollToBottom = false) {
         const rows = [
             ['Population',  p.pop],
             ['Tile Size',   p.tileSize],
-            ['Tile Its.',   p.tileIts],
-            ['Image Its.',  p.outerIts],
+            ['Tile Gens',   p.tileIts],
+            ['Image Its',  p.outerIts],
             ['GoL Steps',   p.golSteps],
             ['Mut. Rate',   fmtMutRate(p.mutRateStart)],
             ['Decay λ',     p.decayLambda],
@@ -1102,10 +1253,15 @@ function renderLog(scrollToBottom = false) {
                 `<span class="logKey">${k}</span><span class="logVal">${v}</span>`;
         }
 
-        div.appendChild(summary);
-        div.appendChild(details);
+        const entryBody = document.createElement('div');
+        entryBody.className = 'logEntryBody';
+        entryBody.appendChild(summary);
+        entryBody.appendChild(details);
 
-        div.addEventListener('click', () => {
+        div.appendChild(deleteBtn);
+        div.appendChild(entryBody);
+
+        entryBody.addEventListener('click', () => {
             const wasExpanded = div.classList.contains('expanded');
             div.classList.toggle('expanded', !wasExpanded);
             if (wasExpanded) expandedLogIds.delete(entry.id); else expandedLogIds.add(entry.id);
