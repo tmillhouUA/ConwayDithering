@@ -17,6 +17,10 @@ let pendingTiles = 0;
 let outerItResolver = null;
 let pendingPrecursorWrites = [];
 
+let currentRunId = null;
+let currentRunFilename = null;
+const expandedLogIds = new Set();
+
 let srcW, srcH, paddedW, paddedH;
 let ySteps, xSteps;
 let precursorGrid;      // Uint8Array — full padded precursor state
@@ -147,6 +151,7 @@ function init() {
 
     initControlPanel();
     spawnWorkers();
+    renderLog();
 }
 
 // ------------------------------------------------------------
@@ -178,12 +183,14 @@ function allWorkersReady() {
 function onFileSelected(e) {
     const file = e.target.files[0];
     if (!file) return;
+    currentRunFilename = file.name;
     const img = new Image();
     img.onload = () => prepareAndRun(img);
     img.src = URL.createObjectURL(file);
 }
 
 function onTestImage() {
+    currentRunFilename = 'dennett.png';
     const img = new Image();
     img.onload = () => prepareAndRun(img);
     img.src = './dennett.png';
@@ -259,6 +266,34 @@ function prepareAndRun(img) {
     setControlState('pre-start');
     drawPlot();
     drawPrecursorToCanvas();
+
+    currentRunId = crypto.randomUUID();
+    const initParams = getParams();
+    logUpsert({
+        id: currentRunId,
+        filename: currentRunFilename || 'unknown',
+        startedAt: new Date().toISOString(),
+        width: srcW,
+        height: srcH,
+        params: {
+            outerIts:     initParams.outerIts,
+            pop:          initParams.pop,
+            tileSize:     STEP,
+            tileIts:      initParams.tileIts,
+            golSteps:     initParams.golSteps,
+            mutRateStart: initParams.mutRateStart,
+            elitism:      initParams.elitism,
+            revertCycles: initParams.revertCycles,
+            decayLambda:  initParams.decayLambda,
+            lossFunc:     initParams.lossFunc,
+        },
+        losses:     { l2: null, l1: null, huber: null },
+        bestLosses: { l2: null, l1: null, huber: null },
+        iterations: 0,
+        status: 'waiting',
+    });
+    renderLog(true);
+
     runAllIterations();
 }
 
@@ -311,6 +346,7 @@ async function runAllIterations() {
         const params = getParams();
         const MUT_RATE_DECAY = Math.pow(2, -1 / params.decayLambda);
         const mutRate = params.mutRateStart * Math.pow(MUT_RATE_DECAY, mutDecayIt);
+        mutDecayIt++;
         await runOneIteration(currentOuterIt, mutRate, params);
 
         // Always commit tile writes mid-cycle so next offset warm-starts from this result
@@ -329,7 +365,6 @@ async function runAllIterations() {
                 bestImageData = ctx.getImageData(0, 0, srcW, srcH);
                 saveBestBtn.disabled = false;
                 consecutiveBadCycles = 0;
-                mutDecayIt += 4;  // advance decay by one full cycle
             } else {
                 consecutiveBadCycles++;
             }
@@ -362,6 +397,7 @@ async function runAllIterations() {
     startPauseBtn.disabled = true;
     setControlState('done');
     progressEl.textContent = `Done — Log Loss: ${Math.log10(Math.max(bestFitness, 1e-6)).toFixed(2)}`;
+    updateRunLog('complete');
 }
 
 // Category definitions — IDs of controls in each group
@@ -389,10 +425,12 @@ function onStartPause() {
         startPauseBtn.textContent = 'Pause';
         setControlState('running');
         if (pauseResolver) { pauseResolver(); pauseResolver = null; }
+        updateRunLog('running');
     } else {
         isPaused = true;
         startPauseBtn.textContent = 'Resume';
         setControlState('paused');
+        updateRunLog('paused');
     }
 }
 
@@ -508,6 +546,7 @@ function handleWorkerMessage(workerIdx, msg) {
                 allLossHistory[k].push(tileAllLossSums[k] / tileAllLossCount);
             ctx.putImageData(outputImageData, 0, 0);
             drawPlot();
+            updateRunLog();
             outerItResolver();
         } else {
             dispatchNext(workerIdx);
@@ -709,6 +748,7 @@ function switchInfoTab(tab) {
         document.getElementById(`${t}Inner`).style.display = t === tab ? '' : 'none';
         document.getElementById(`tab${t.charAt(0).toUpperCase() + t.slice(1)}`).classList.toggle('active', t === tab);
     }
+    if (tab === 'logs') renderLog();
 }
 
 function switchTab(tab) {
@@ -904,6 +944,178 @@ function saveBlob(blob, filename) {
     a.href = URL.createObjectURL(blob);
     a.download = filename;
     a.click();
+}
+
+// ------------------------------------------------------------
+// Run log — localStorage-backed persistent log
+// ------------------------------------------------------------
+
+const LOG_KEY     = 'conwayDitherLog';
+const LOG_MAX     = 50;
+const LOSS_FUNC_NAMES = ['Euclidean', 'Manhattan', 'Huber'];
+
+function loadLog() {
+    try {
+        const entries = JSON.parse(localStorage.getItem(LOG_KEY)) || [];
+        // Normalize stale in-progress entries from previous sessions
+        let dirty = false;
+        for (const e of entries) {
+            if (e.status === 'running' || e.status === 'waiting' || e.status === 'paused') {
+                if (e.id !== currentRunId) { e.status = 'complete'; dirty = true; }
+            }
+        }
+        if (dirty) saveLog(entries);
+        return entries;
+    } catch { return []; }
+}
+
+function saveLog(entries) {
+    try { localStorage.setItem(LOG_KEY, JSON.stringify(entries)); } catch {}
+}
+
+function logUpsert(entry) {
+    const entries = loadLog();
+    const idx = entries.findIndex(e => e.id === entry.id);
+    if (idx >= 0) {
+        entries[idx] = entry;
+    } else {
+        entries.push(entry);
+        if (entries.length > LOG_MAX) entries.splice(0, entries.length - LOG_MAX);
+    }
+    saveLog(entries);
+}
+
+function updateRunLog(statusOverride) {
+    if (!currentRunId) return;
+    const entries = loadLog();
+    const entry = entries.find(e => e.id === currentRunId);
+    if (!entry) return;
+
+    const n = allLossHistory[0].length;
+    if (n > 0) {
+        const l2    = allLossHistory[0][n - 1];
+        const l1    = allLossHistory[1][n - 1];
+        const huber = allLossHistory[2][n - 1];
+        entry.losses = { l2, l1, huber };
+        entry.bestLosses = {
+            l2:    entry.bestLosses.l2    === null ? l2    : Math.min(entry.bestLosses.l2,    l2),
+            l1:    entry.bestLosses.l1    === null ? l1    : Math.min(entry.bestLosses.l1,    l1),
+            huber: entry.bestLosses.huber === null ? huber : Math.min(entry.bestLosses.huber, huber),
+        };
+        entry.iterations = n;
+    }
+    if (statusOverride) entry.status = statusOverride;
+    saveLog(entries);
+    renderLog();
+}
+
+function fmtLoss(v) {
+    return v === null ? '—' : Math.log10(Math.max(v, 1e-6)).toFixed(2);
+}
+
+function fmtMutRate(v) {
+    return v.toExponential(1);
+}
+
+function fmtRevert(v) {
+    return v === 0 ? 'off' : `${v * 4} its`;
+}
+
+function fmtDate(iso) {
+    const d = new Date(iso);
+    const date = d.toLocaleDateString([], { month: 'numeric', day: 'numeric' });
+    const time = d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false });
+    return `${date} ${time}`;
+}
+
+function renderLog(scrollToBottom = false) {
+    const logsInner = document.getElementById('logsInner');
+    const entries = loadLog();
+
+    logsInner.innerHTML = '';
+
+    // Header with clear button
+    const header = document.createElement('div');
+    header.id = 'logHeader';
+    header.innerHTML = `<span>Run History</span>`;
+    const clearBtn = document.createElement('button');
+    clearBtn.id = 'clearLogBtn';
+    clearBtn.textContent = 'Clear';
+    clearBtn.addEventListener('click', () => {
+        const entries = loadLog().filter(e => e.id === currentRunId);
+        saveLog(entries);
+        renderLog();
+    });
+    header.appendChild(clearBtn);
+    logsInner.appendChild(header);
+
+    if (entries.length === 0) {
+        const empty = document.createElement('div');
+        empty.style.cssText = 'padding:0.6rem 0.75rem; color:#555; font-size:0.75rem;';
+        empty.textContent = 'No runs recorded yet.';
+        logsInner.appendChild(empty);
+        return;
+    }
+
+    for (const entry of entries) {
+        const l2  = fmtLoss(entry.losses.l2);
+        const l1  = fmtLoss(entry.losses.l1);
+        const hub = fmtLoss(entry.losses.huber);
+        const statusColor = entry.status === 'running' ? '#7af' : entry.status === 'complete' ? '#6c6' : '#888';
+
+        const div = document.createElement('div');
+        const isExpanded = expandedLogIds.has(entry.id);
+        div.className = isExpanded ? 'logEntry expanded' : 'logEntry';
+
+        const summary = document.createElement('div');
+        summary.className = 'logSummary';
+        summary.innerHTML =
+            `<div class="logSummaryText">` +
+            `<div class="logSummaryLine1"><span class="logFilename">${entry.filename}</span></div>` +
+            `<div class="logSummaryLine2">L2=${l2}  L1=${l1}  H=${hub}</div>` +
+            `</div>` +
+            `<div class="logSummaryRight">` +
+            `<span class="logStatusRow"><span class="logStatus" style="color:${statusColor};">${entry.status}</span><span class="logChevron">${isExpanded ? 'v' : '>'}</span></span>` +
+            `<span class="logDate">${fmtDate(entry.startedAt)}</span>` +
+            `</div>`;
+
+        const details = document.createElement('div');
+        details.className = 'logDetails';
+
+        const p = entry.params;
+        const rows = [
+            ['Population',  p.pop],
+            ['Tile Size',   p.tileSize],
+            ['Tile Its.',   p.tileIts],
+            ['Image Its.',  p.outerIts],
+            ['GoL Steps',   p.golSteps],
+            ['Mut. Rate',   fmtMutRate(p.mutRateStart)],
+            ['Decay λ',     p.decayLambda],
+            ['Revert',      fmtRevert(p.revertCycles)],
+            ['Elitism',     p.elitism === 0 ? 'off' : p.elitism],
+            ['Loss Func.',  LOSS_FUNC_NAMES[p.lossFunc]],
+            ['Image',       `${entry.width}×${entry.height}`],
+            ['Iterations',  `${entry.iterations}/${p.outerIts}`],
+        ];
+        for (const [k, v] of rows) {
+            details.innerHTML +=
+                `<span class="logKey">${k}</span><span class="logVal">${v}</span>`;
+        }
+
+        div.appendChild(summary);
+        div.appendChild(details);
+
+        div.addEventListener('click', () => {
+            const wasExpanded = div.classList.contains('expanded');
+            div.classList.toggle('expanded', !wasExpanded);
+            if (wasExpanded) expandedLogIds.delete(entry.id); else expandedLogIds.add(entry.id);
+            summary.querySelector('.logChevron').textContent = wasExpanded ? '>' : 'v';
+        });
+
+        logsInner.appendChild(div);
+    }
+
+    if (scrollToBottom) logsInner.scrollTop = logsInner.scrollHeight;
 }
 
 function onSaveCurrent() {

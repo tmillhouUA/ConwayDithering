@@ -450,3 +450,94 @@ button {
 
 button:hover:not(:disabled) { background: #333; }
 button:disabled { opacity: 0.35; cursor: default; }
+
+/* ------------------------------------------------------------
+   Run log
+   ------------------------------------------------------------ */
+
+#logHeader {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0.35rem 0.5rem;
+  border-bottom: 1px solid #333;
+  position: sticky;
+  top: 0;
+  background: #111;
+  z-index: 1;
+  flex-shrink: 0;
+}
+
+#logHeader span {
+  font-size: 0.7rem;
+  color: #555;
+  font-variant: small-caps;
+  letter-spacing: 0.06em;
+}
+
+#clearLogBtn {
+  font-size: 0.7rem;
+  padding: 0.15rem 0.5rem;
+  background: #1a1a1a;
+  border: 1px solid #333;
+  color: #666;
+  border-radius: 3px;
+  cursor: pointer;
+  transition: color 0.15s, border-color 0.15s;
+}
+
+#clearLogBtn:hover { color: #aaa; border-color: #555; background: #1a1a1a; }
+
+.logEntry {
+  border-bottom: 1px solid #1e1e1e;
+  padding: 0.35rem 0.5rem;
+  cursor: pointer;
+  font-size: 0.75rem;
+}
+
+.logEntry:hover { background: #161616; }
+
+.logSummary {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 0.5rem;
+}
+
+.logSummaryText { flex: 1; min-width: 0; }
+
+.logSummaryLine1 { color: #eee; margin-bottom: 0.15rem; }
+.logSummaryLine2 { color: #888; }
+.logDate { color: #666; }
+
+.logSummaryRight {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 0.15rem;
+  flex-shrink: 0;
+}
+
+.logFilename { color: #eee; }
+.logStatusRow { display: flex; align-items: center; gap: 0.3rem; }
+.logStatus { font-size: 0.7rem; }
+.logDate { color: #555; font-size: 0.7rem; }
+.logChevron { color: #555; font-size: 0.65rem; }
+
+.logDetails {
+  display: none;
+  margin-top: 0.4rem;
+  grid-template-columns: auto auto auto auto;
+  gap: 0.15rem 0.4rem;
+  font-size: 0.72rem;
+}
+
+.logEntry.expanded .logDetails { display: grid; }
+
+.logKey {
+  color: #555;
+  font-variant: small-caps;
+  letter-spacing: 0.04em;
+}
+
+.logVal { color: #aaa; }
