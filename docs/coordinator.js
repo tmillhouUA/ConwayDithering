@@ -34,8 +34,6 @@ let startPauseBtn, saveCurrentBtn, saveBestBtn;
 let plotCanvas, plotCtx;
 let fitnessHistory = [];        // avg loss per iteration for active function
 let allLossHistory = [[], [], []]; // avg loss per iteration for all three [L2, L1, Huber]
-let tileFitnessSum, tileFitnessCount;
-let tileAllLossSums, tileAllLossCount;
 let isPaused = true;
 let pauseResolver = null;
 let currentOuterIt = 0;
@@ -515,10 +513,6 @@ function runOneIteration(outerIt, mutRate, params) {
         pendingTiles = (tyEnd - tyStart) * (txEnd - txStart);
         pendingPrecursorWrites = [];
         jobQueue = [];
-        tileFitnessSum = 0;
-        tileFitnessCount = 0;
-        tileAllLossSums = [0, 0, 0];
-        tileAllLossCount = 0;
 
         for (let ty = tyStart; ty < tyEnd; ty++) {
             for (let tx = txStart; tx < txEnd; tx++) {
@@ -548,6 +542,67 @@ function dispatchNext(workerIdx) {
     const job = jobQueue.shift();
     workerBusy[workerIdx] = true;
     workers[workerIdx].postMessage(job, [job.targetTile.buffer, job.precursorIn.buffer]);
+}
+
+// ------------------------------------------------------------
+// Image-level loss — tile-size-independent metric
+// Matches C++ gaussian_blur (ksize=7, reflect-101) and compute_loss exactly.
+// ------------------------------------------------------------
+
+const GAUSS7 = new Float32Array([0.03125, 0.109375, 0.21875, 0.28125, 0.21875, 0.109375, 0.03125]);
+
+function reflect101(i, max) {
+    while (i < 0 || i >= max) {
+        if (i < 0)    i = -i;
+        if (i >= max) i = 2 * (max - 1) - i;
+    }
+    return i;
+}
+
+function gaussianBlurJS(src, W, H) {
+    const tmp = new Float32Array(W * H);
+    const out = new Float32Array(W * H);
+    for (let r = 0; r < H; r++)
+        for (let c = 0; c < W; c++) {
+            let s = 0;
+            for (let k = -3; k <= 3; k++) s += GAUSS7[k + 3] * src[r * W + reflect101(c + k, W)];
+            tmp[r * W + c] = s;
+        }
+    for (let r = 0; r < H; r++)
+        for (let c = 0; c < W; c++) {
+            let s = 0;
+            for (let k = -3; k <= 3; k++) s += GAUSS7[k + 3] * tmp[reflect101(r + k, H) * W + c];
+            out[r * W + c] = s;
+        }
+    return out;
+}
+
+const HUBER_DELTA = 0.15;
+
+function computeImageLosses() {
+    const N = srcW * srcH;
+    // Build float image from outputImageData (0=alive → 0.0, 255=dead → 1.0)
+    const evolved = new Float32Array(N);
+    for (let i = 0; i < N; i++) evolved[i] = outputImageData.data[i * 4] / 255;
+
+    // Build float target from paddedTarget (strip padding)
+    const target = new Float32Array(N);
+    for (let r = 0; r < srcH; r++)
+        for (let c = 0; c < srcW; c++)
+            target[r * srcW + c] = paddedTarget[(r + PAD) * paddedW + (c + PAD)];
+
+    const blurredEvolved = gaussianBlurJS(evolved, srcW, srcH);
+    const blurredTarget  = gaussianBlurJS(target,  srcW, srcH);
+
+    let l2 = 0, l1 = 0, huber = 0;
+    for (let i = 0; i < N; i++) {
+        const d = blurredTarget[i] - blurredEvolved[i];
+        const ad = Math.abs(d);
+        l2    += d * d;
+        l1    += ad;
+        huber += ad <= HUBER_DELTA ? 0.5 * d * d : HUBER_DELTA * (ad - 0.5 * HUBER_DELTA);
+    }
+    return [l2 / N, l1 / N, huber / N];
 }
 
 // ------------------------------------------------------------
@@ -600,16 +655,12 @@ function handleWorkerMessage(workerIdx, msg) {
 
         writeTileToCanvas(msg.tileX, msg.tileY, msg.offset, msg.evolvedOut);
         pendingPrecursorWrites.push({ tileX: msg.tileX, tileY: msg.tileY, offset: msg.offset, precursorOut: msg.precursorOut });
-        tileFitnessSum += msg.fitness;
-        tileFitnessCount++;
-        for (let k = 0; k < 3; k++) tileAllLossSums[k] += msg.allLosses[k];
-        tileAllLossCount++;
 
         pendingTiles--;
         if (pendingTiles === 0) {
-            fitnessHistory.push(tileFitnessSum / tileFitnessCount);
-            for (let k = 0; k < 3; k++)
-                allLossHistory[k].push(tileAllLossSums[k] / tileAllLossCount);
+            const imgLosses = computeImageLosses();
+            for (let k = 0; k < 3; k++) allLossHistory[k].push(imgLosses[k]);
+            fitnessHistory.push(imgLosses[getParams().lossFunc]);
             ctx.putImageData(outputImageData, 0, 0);
             drawPlot();
             updateRunLog();
