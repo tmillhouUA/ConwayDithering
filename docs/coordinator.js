@@ -744,11 +744,13 @@ function sizeCanvas() {
         while (srcW * (n + 1) <= maxW && srcH * (n + 1) <= maxH) n++;
         w = srcW * n;
         h = srcH * n;
+        canvas.style.imageRendering = 'pixelated';
     } else {
-        // Image exceeds budget at 1:1 — scale down continuously to fit
+        // Image exceeds budget at 1:1 — scale down continuously, use cubic for quality
         const scale = Math.min(maxW / srcW, maxH / srcH);
         w = Math.round(srcW * scale);
         h = Math.round(srcH * scale);
+        canvas.style.imageRendering = 'auto';
     }
     canvas.style.width  = w + 'px';
     canvas.style.height = h + 'px';
@@ -1082,8 +1084,8 @@ function onHistorySaveSeries() {
 // Loupe
 // ------------------------------------------------------------
 
-const LOUPE_SIZE    = 160;  // display size in px
-const LOUPE_ZOOM    = 6;    // magnification factor
+const LOUPE_SIZE    = 200;  // display size in px
+const LOUPE_ZOOM    = 2;    // magnification factor
 const LOUPE_OFFSET  = 16;   // gap between cursor and loupe edge
 
 let loupeCanvas, loupeCtx;
