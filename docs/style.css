@@ -212,7 +212,7 @@ main {
 }
 
 .infoInner a {
-  color: #7af;
+  color: #7af !important;
   text-decoration: none;
 }
 
