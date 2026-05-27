@@ -15,13 +15,17 @@
 
   <main>
     <div id="uploadArea">
-      <p id="uploadLabel">Upload a grayscale image to begin*</p>
+      <p id="uploadLabel">Upload an image to begin</p>
       <label id="uploadBtn" for="fileInput">Choose File</label>
       <input type="file" id="fileInput" accept="image/*" disabled>
+      <div id="scaleRow">
+        <input type="checkbox" id="scaleToFitChk" checked>
+        <label for="scaleToFitChk">Scale to fit screen</label>
+      </div>
       <p class="orText">or use a test image</p>
       <button id="testImageBtn" disabled>Test Image</button>
       <p id="statusText">Loading WASM...</p>
-      <p id="imagetipText"><br><br>*An image with good contrast and a resolution of approximately 400x600 pixels is recommended.</p>
+      <p id="imagetipText"><br><br>For best results, use an image with good contrast and a subject that fills the frame.</p>
     </div>
 
     <div id="viewer" style="display:none;">

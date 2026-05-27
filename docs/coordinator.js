@@ -240,19 +240,38 @@ function allWorkersReady() {
 // File loading
 // ------------------------------------------------------------
 
+const SCALE_MAX_LONG = 810;
+
+function maybeScaleImage(img) {
+    const doScale = document.getElementById('scaleToFitChk').checked;
+    const iw = img.naturalWidth, ih = img.naturalHeight;
+    const longSide = Math.max(iw, ih);
+    if (!doScale || longSide <= SCALE_MAX_LONG) return img;
+    // Find smallest integer divisor n such that the long side fits within SCALE_MAX_LONG
+    let n = Math.ceil(longSide / SCALE_MAX_LONG);
+    // Then try smaller n values if they still fit (prefer largest image that fits)
+    while (n > 1 && Math.round(longSide / (n - 1)) <= SCALE_MAX_LONG) n--;
+    const w = Math.round(iw / n);
+    const h = Math.round(ih / n);
+    const c = document.createElement('canvas');
+    c.width = w; c.height = h;
+    c.getContext('2d').drawImage(img, 0, 0, w, h);
+    return c;
+}
+
 function onFileSelected(e) {
     const file = e.target.files[0];
     if (!file) return;
     currentRunFilename = file.name;
     const img = new Image();
-    img.onload = () => prepareAndRun(img);
+    img.onload = () => prepareAndRun(maybeScaleImage(img));
     img.src = URL.createObjectURL(file);
 }
 
 function onTestImage() {
     currentRunFilename = 'dennett.png';
     const img = new Image();
-    img.onload = () => prepareAndRun(img);
+    img.onload = () => prepareAndRun(maybeScaleImage(img));
     img.src = './dennett.png';
 }
 
@@ -263,8 +282,8 @@ function prepareAndRun(img) {
     TILE_SIZE = STEP + 2 * MARGIN;
 
     const offscreen = document.createElement('canvas');
-    offscreen.width  = img.naturalWidth;
-    offscreen.height = img.naturalHeight;
+    offscreen.width  = img.naturalWidth  ?? img.width;
+    offscreen.height = img.naturalHeight ?? img.height;
     const offCtx = offscreen.getContext('2d');
     offCtx.drawImage(img, 0, 0);
     const imageData = offCtx.getImageData(0, 0, offscreen.width, offscreen.height);
@@ -717,11 +736,12 @@ function sizeCanvas() {
     // Vertical budget: viewport minus header (~60px), controls (~80px), padding and gaps (~40px), then 10% shorter
     const maxH = Math.max(200, (window.innerHeight - 180) * 0.9);
     // Horizontal budget: viewport minus two 300px side columns, two 1rem gaps, and 2rem body padding
-    const maxW = Math.max(200, window.innerWidth - 600 - 4 * 16);
-    const scale = Math.min(maxW / srcW, maxH / srcH);
-    canvas.style.width  = Math.round(srcW * scale) + 'px';
-    canvas.style.height = Math.round(srcH * scale) + 'px';
-
+    const maxW = Math.min(1200, Math.max(200, window.innerWidth - 600 - 4 * 16));
+    // Display at largest integer scale that fits within budget (minimum 1:1)
+    let n = 1;
+    while (srcW * (n + 1) <= maxW && srcH * (n + 1) <= maxH) n++;
+    canvas.style.width  = (srcW * n) + 'px';
+    canvas.style.height = (srcH * n) + 'px';
 }
 
 // ------------------------------------------------------------

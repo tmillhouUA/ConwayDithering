@@ -10,7 +10,7 @@ The image is divided into overlapping tiles. For each tile, a genetic algorithm 
 
 A live version is available at [tmillhouua.github.io/ConwayDithering](https://tmillhouua.github.io/ConwayDithering/).
 
-Upload any image (or use the built-in test image) to begin. I advise scaling your chosen image to approximately 400x600 pixels. Larger images will take longer to evolve and the final result will make the Life pattern hard to discern at normal viewing sizes. I also recommend an image whose subject takes up most of the frame and contrasts sharply with the background (e.g., a portrait of a person against a white background). Full descriptions of all controls and parameters are available in the **How To** tab inside the tool. Background on the algorithm is in the **About** tab.
+Upload any image (or use the built-in test image) to begin. I advise scaling your chosen image to approximately 400x600 pixels. Larger images will take longer to evolve and will make the Life pattern hard to discern at normal viewing sizes. Alternatively, use the "Scale to fit screen" checkbox to automatically scale your image to a reasonable size. I also recommend an image whose subject takes up most of the frame and contrasts sharply with the background (e.g., a portrait of a person against a white background). Full descriptions of all controls and parameters are available in the **How To** tab inside the tool. Background on the algorithm is in the **About** tab.
 
 ## Implementation
 
