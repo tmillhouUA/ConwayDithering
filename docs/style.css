@@ -587,8 +587,6 @@ button:disabled { opacity: 0.35; cursor: default; }
 
 .logKey {
   color: #555;
-  font-variant: small-caps;
-  letter-spacing: 0.04em;
 }
 
 .logVal { color: #aaa; }

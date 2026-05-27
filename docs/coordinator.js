@@ -331,31 +331,6 @@ function prepareAndRun(img) {
     drawPrecursorToCanvas();
 
     currentRunId = crypto.randomUUID();
-    const initParams = getParams();
-    logUpsert({
-        id: currentRunId,
-        filename: currentRunFilename || 'unknown',
-        startedAt: new Date().toISOString(),
-        width: srcW,
-        height: srcH,
-        params: {
-            outerIts:     initParams.outerIts,
-            pop:          initParams.pop,
-            tileSize:     initParams.tileSize,
-            tileIts:      initParams.tileIts,
-            golSteps:     initParams.golSteps,
-            mutRateStart: initParams.mutRateStart,
-            elitism:      initParams.elitism,
-            revertCycles: initParams.revertCycles,
-            decayLambda:  initParams.decayLambda,
-            lossFunc:     initParams.lossFunc,
-        },
-        losses:     { l2: null, l1: null, huber: null },
-        bestLosses: { l2: null, l1: null, huber: null },
-        iterations: 0,
-        status: 'waiting',
-    });
-    renderLog(true);
 
     runAllIterations();
 }
@@ -489,7 +464,36 @@ function onStartPause() {
         startPauseBtn.textContent = 'Pause';
         setControlState('running');
         if (pauseResolver) { pauseResolver(); pauseResolver = null; }
-        updateRunLog('running');
+        // Create log entry on first Start press only
+        if (currentOuterIt === 0) {
+            const initParams = getParams();
+            logUpsert({
+                id: currentRunId,
+                filename: currentRunFilename || 'unknown',
+                startedAt: new Date().toISOString(),
+                width: srcW,
+                height: srcH,
+                params: {
+                    outerIts:     initParams.outerIts,
+                    pop:          initParams.pop,
+                    tileSize:     initParams.tileSize,
+                    tileIts:      initParams.tileIts,
+                    golSteps:     initParams.golSteps,
+                    mutRateStart: initParams.mutRateStart,
+                    elitism:      initParams.elitism,
+                    revertCycles: initParams.revertCycles,
+                    decayLambda:  initParams.decayLambda,
+                    lossFunc:     initParams.lossFunc,
+                },
+                losses:     { l2: null, l1: null, huber: null },
+                bestLosses: { l2: null, l1: null, huber: null },
+                iterations: 0,
+                status: 'running',
+            });
+            renderLog(true);
+        } else {
+            updateRunLog('running');
+        }
     } else {
         isPaused = true;
         startPauseBtn.textContent = 'Resume';
@@ -1234,7 +1238,7 @@ function renderLog(scrollToBottom = false) {
             ['Image Its',  p.outerIts],
             ['GoL Steps',   p.golSteps],
             ['Mut. Rate',   fmtMutRate(p.mutRateStart)],
-            ['Decay L', p.decayLambda],
+            ['Decay λ', p.decayLambda],
             ['Revert',      fmtRevert(p.revertCycles)],
             ['Elitism',     p.elitism === 0 ? 'off' : p.elitism],
             ['Loss Func.',  LOSS_FUNC_NAMES[p.lossFunc]],
