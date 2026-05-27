@@ -737,11 +737,21 @@ function sizeCanvas() {
     const maxH = Math.max(200, (window.innerHeight - 180) * 0.9);
     // Horizontal budget: viewport minus two 300px side columns, two 1rem gaps, and 2rem body padding
     const maxW = Math.min(1200, Math.max(200, window.innerWidth - 600 - 4 * 16));
-    // Display at largest integer scale that fits within budget (minimum 1:1)
-    let n = 1;
-    while (srcW * (n + 1) <= maxW && srcH * (n + 1) <= maxH) n++;
-    canvas.style.width  = (srcW * n) + 'px';
-    canvas.style.height = (srcH * n) + 'px';
+    let w, h;
+    if (srcW <= maxW && srcH <= maxH) {
+        // Image fits at 1:1 — scale up by largest integer that still fits
+        let n = 1;
+        while (srcW * (n + 1) <= maxW && srcH * (n + 1) <= maxH) n++;
+        w = srcW * n;
+        h = srcH * n;
+    } else {
+        // Image exceeds budget at 1:1 — scale down continuously to fit
+        const scale = Math.min(maxW / srcW, maxH / srcH);
+        w = Math.round(srcW * scale);
+        h = Math.round(srcH * scale);
+    }
+    canvas.style.width  = w + 'px';
+    canvas.style.height = h + 'px';
 }
 
 // ------------------------------------------------------------
