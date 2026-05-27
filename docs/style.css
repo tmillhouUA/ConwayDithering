@@ -211,6 +211,13 @@ main {
   margin-bottom: 0.5rem;
 }
 
+.infoInner a {
+  color: #7af;
+  text-decoration: none;
+}
+
+.infoInner a:hover { text-decoration: underline; }
+
 .infoInner dl {
   margin: 0 0 0.25rem;
 }

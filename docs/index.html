@@ -143,7 +143,7 @@
           </div>
           <div id="overviewInner" class="infoInner">
             <h3>Overview</h3>
-            <p>Conway dithering converts an image into a one-bit Life pattern. The resulting image is not merely styled to look like Conway's Game of Life — the pattern is actually produced by running the Life rules forward from an evolutionarily-optimized starting state.</p>
+            <p>Conway dithering converts an image into a one-bit <a href="https://en.wikipedia.org/wiki/Conway%27s_Game_of_Life" target="_blank">Game of Life</a> pattern. The resulting image is not merely styled to look like Conway's Game of Life — the pattern is actually produced by running the Life rules forward from an evolutionarily-optimized starting state. I developed this tool to create the cover of <a href="https://mitpress.mit.edu/9780262052030/dennetts-real-patterns-in-science-and-nature/" target="_blank"><em>Dennett's Real Patterns in Science and Nature</em></a> (MIT Press, 2026).</p>
             <h3>How It Works</h3>
             <p>The image is divided into overlapping tiles. For each tile, an evolutionary algorithm searches for a starting state that, after a fixed number of Game of Life steps, produces a pattern that approximates the target image. Candidates are mutated and evaluated over many generations, with the mutation rate decaying as the image converges.</p>
             <h3>Why It Works</h3>
