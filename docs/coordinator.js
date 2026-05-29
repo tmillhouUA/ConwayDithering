@@ -297,7 +297,7 @@ function prepareAndRun(img) {
     paddedW = xSteps * STEP + 2 * PAD;
     paddedH = ySteps * STEP + 2 * PAD;
 
-    // Build padded float target [0.25, 1.0], 1.0 = dead = white border
+    // Build padded float target [0.25, 1.0]
     paddedTarget = new Float32Array(paddedH * paddedW).fill(1.0);
     for (let r = 0; r < srcH; r++) {
         for (let c = 0; c < srcW; c++) {

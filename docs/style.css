@@ -211,9 +211,12 @@ main {
   margin-bottom: 0.5rem;
 }
 
-.infoInner a {
+.infoInner a, .infoInner a em {
   color: #7af !important;
   text-decoration: none;
+  font-variant: normal;
+  font-feature-settings: "liga" 0, "smcp" 0;
+  font-style: normal;
 }
 
 .infoInner a:hover { text-decoration: underline; }
